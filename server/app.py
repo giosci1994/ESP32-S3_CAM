@@ -29,7 +29,7 @@ except Exception as e:
     mp_ok = False
 
 # --- Env / settings ---
-SOURCE_URL = os.getenv("SOURCE_URL", "http://## indirizzo ip esp32 ##/stream")
+SOURCE_URL = os.getenv("SOURCE_URL", "http://192.168.1.24/stream")
 TARGET_FPS = float(os.getenv("TARGET_FPS", "25"))
 FRAME_DELAY = 1.0 / TARGET_FPS
 TARGET_SIZE = (800, 600)
@@ -41,13 +41,19 @@ PINCH_DEADZONE_PX = int(os.getenv("PINCH_DEADZONE_PX", "8"))
 PINCH_HISTORY = int(os.getenv("PINCH_HISTORY", "8"))
 
 # MQTT
-MQTT_HOST = os.getenv("MQTT_HOST", "## indirizzo ip mqtt ##")
+MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.100")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+<<<<<<< HEAD
 MQTT_USER = os.getenv("MQTT_USER", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "## base topic mqtt ##")
+=======
+MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "password")
+MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "gesture32")
+>>>>>>> ef27f72 (ritorno alle origini)
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
-MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "## base topic mqtt ##-server")
+MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gesture32-server")
 
 logging.basicConfig(level=logging.DEBUG if VERBOSE else logging.INFO)
 log = logging.getLogger("gesture-server")
@@ -141,8 +147,12 @@ def mqtt_connect_and_discover():
 
     import paho.mqtt.client as mqtt
     mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
+<<<<<<< HEAD
     if MQTT_USER or MQTT_PASSWORD:
         mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+=======
+    mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+>>>>>>> ef27f72 (ritorno alle origini)
     mqtt_client.will_set(f"{MQTT_BASE}/availability", "offline", retain=True)
     mqtt_client.on_connect = on_connect
     mqtt_client.on_disconnect = on_disconnect
