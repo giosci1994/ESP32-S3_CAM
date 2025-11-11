@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -9,17 +9,17 @@
 <body>
   <header>
     <h1>ESP32 Cam + MediaPipe (<span id="header-resolution">800×600</span> @ <span id="header-fps">25</span>fps)</h1>
-    <p>UI: <code>/</code> • Stream: <code>/stream</code> • Snapshot: <code>/snapshot.jpg</code> • Health: <code>/health</code></p>
-    <button id="toggle-settings" class="settings-btn" type="button">⚙️ Settings</button>
+    <p>Interfaccia: <code>/</code> • Streaming: <code>/stream</code> • Istante: <code>/snapshot.jpg</code> • Stato: <code>/health</code></p>
+    <button id="toggle-settings" class="settings-btn" type="button">⚙️ Impostazioni</button>
   </header>
   <main>
     <section class="video">
-      <img id="mjpeg" src="/stream" alt="stream"/>
+      <img id="mjpeg" src="/stream" alt="flusso video"/>
     </section>
     <section class="panel">
-      <div class="card"><div class="k">Gesture</div><div class="v" id="gesture">-</div></div>
-      <div class="card"><div class="k">Confidence</div><div class="v" id="confidence">-</div></div>
-      <div class="card"><div class="k">Hands</div><div class="v" id="hands">0</div></div>
+      <div class="card"><div class="k">Gesto</div><div class="v" id="gesture">-</div></div>
+      <div class="card"><div class="k">Affidabilità</div><div class="v" id="confidence">-</div></div>
+      <div class="card"><div class="k">Mani rilevate</div><div class="v" id="hands">0</div></div>
       <div class="card"><div class="k">Pinch</div><div class="v" id="pinch">-</div></div>
     </section>
   </main>
@@ -28,12 +28,12 @@
   <aside id="settings-drawer">
     <section class="drawer-section">
       <header>
-        <h2>Status</h2>
-        <p>Controllo flusso video e connessione MQTT.</p>
+        <h2>Stato</h2>
+        <p>Controllo del flusso video e della connessione MQTT.</p>
       </header>
       <div class="status-list">
         <div class="status-item" id="status-video">
-          <span class="label">Video stream</span>
+          <span class="label">Streaming video</span>
           <span class="value">-</span>
         </div>
         <div class="status-item" id="status-mqtt">
@@ -47,7 +47,7 @@
       </div>
       <div class="log-block" id="log-block">
         <div class="log-header">
-          <span>Log (debug)</span>
+          <span>Registri (debug)</span>
           <button id="debug-toggle" type="button" class="pill-btn" data-state="off">Attiva debug</button>
         </div>
         <pre id="log-output">Debug non attivo</pre>
@@ -57,19 +57,12 @@
     <section class="drawer-section" id="gesture-section">
       <header>
         <div class="section-heading">
-          <h2>Gesture MQTT</h2>
+          <h2>Gesti MQTT</h2>
           <button id="gesture-collapse" type="button" class="collapse-btn" aria-expanded="true" aria-controls="gesture-content">Nascondi</button>
         </div>
-        <p>Seleziona le gesture da inviare tramite MQTT e imposta la soglia minima di confidence.</p>
+        <p>Seleziona i gesti da inviare tramite MQTT.</p>
       </header>
       <div id="gesture-content" class="gesture-content">
-        <div class="gesture-controls">
-          <label for="confidence-threshold">Confidence minima</label>
-          <div class="slider-row">
-            <input id="confidence-threshold" type="range" min="50" max="95" step="1" value="75" />
-            <span class="slider-value" id="confidence-threshold-value">70%</span>
-          </div>
-        </div>
         <div id="gesture-list" class="gesture-list"></div>
         <div class="gesture-actions">
           <button id="gesture-save" type="button">Salva selezione</button>
@@ -80,20 +73,20 @@
 
     <section class="drawer-section" id="advanced-section">
       <header>
-        <h2>Advanced Settings</h2>
-        <p>Affina sensibilità gesture, prestazioni video e parametri di pubblicazione.</p>
+        <h2>Impostazioni avanzate</h2>
+        <p>Affina la sensibilità dei gesti, le prestazioni video e i parametri di pubblicazione.</p>
       </header>
       <div class="advanced-groups">
         <div class="advanced-card">
-          <h3>A) Rilevamento e Sensibilità</h3>
+          <h3><span class="advanced-icon">🖐️</span><span>Rilevamento e sensibilità</span></h3>
           <div class="advanced-grid">
             <div class="advanced-control">
-              <label for="advanced-confidence-min">Confidence minima</label>
+              <label for="advanced-confidence-min">Affidabilità minima</label>
               <div class="slider-row">
                 <input id="advanced-confidence-min" type="range" min="0.5" max="0.95" step="0.01" value="0.75" />
                 <span class="slider-value" id="advanced-confidence-min-value">0.75</span>
               </div>
-              <p class="control-hint">Soglia oltre la quale la gesture è considerata valida.</p>
+              <p class="control-hint">Soglia oltre la quale il gesto è considerato valido.</p>
             </div>
             <div class="advanced-control">
               <label for="advanced-movement">Sensibilità movimento (px)</label>
@@ -112,7 +105,7 @@
               <p class="control-hint">Media mobile di frame per stabilizzare coordinate.</p>
             </div>
             <div class="advanced-control">
-              <label for="advanced-hold-delay">Ritardo conferma gesture</label>
+              <label for="advanced-hold-delay">Ritardo conferma gesto</label>
               <div class="slider-row">
                 <input id="advanced-hold-delay" type="range" min="200" max="1500" step="50" value="700" />
                 <span class="slider-value" id="advanced-hold-delay-value">700 ms</span>
@@ -123,7 +116,7 @@
         </div>
 
         <div class="advanced-card">
-          <h3>B) Pinch e Interazione Complessa</h3>
+          <h3><span class="advanced-icon">🤏</span><span>Pinch e interazione</span></h3>
           <div class="advanced-grid">
             <div class="advanced-control">
               <label for="advanced-pinch-threshold">Soglia di pinch</label>
@@ -157,11 +150,19 @@
               </div>
               <p class="control-hint">Percentuale di schermo per selezione angoli.</p>
             </div>
+            <div class="advanced-control">
+              <label for="advanced-pinch-corner-hold">Attesa per attivare pinch (s)</label>
+              <div class="slider-row">
+                <input id="advanced-pinch-corner-hold" type="range" min="0.5" max="3" step="0.1" value="1.5" />
+                <span class="slider-value" id="advanced-pinch-corner-hold-value">1.5 s</span>
+              </div>
+              <p class="control-hint">Tempo di puntamento sull'angolo per attivare/disattivare.</p>
+            </div>
           </div>
         </div>
 
         <div class="advanced-card">
-          <h3>C) Prestazioni e Filtri</h3>
+          <h3><span class="advanced-icon">🎞️</span><span>Prestazioni e filtri</span></h3>
           <div class="advanced-grid">
             <div class="advanced-control">
               <label for="advanced-processing-fps">Frame rate elaborazione</label>
@@ -199,7 +200,7 @@
         </div>
 
         <div class="advanced-card">
-          <h3>D) MQTT e Output</h3>
+          <h3><span class="advanced-icon">📡</span><span>MQTT e output</span></h3>
           <div class="advanced-grid">
             <div class="advanced-control">
               <label for="advanced-mqtt-interval">Frequenza aggiornamento MQTT</label>
@@ -243,7 +244,7 @@
           </div>
           <div class="advanced-actions">
             <button id="advanced-save" type="button" class="primary">Salva parametri</button>
-            <button id="advanced-reset" type="button" class="secondary">Reset default</button>
+            <button id="advanced-reset" type="button" class="secondary">Ripristina predefiniti</button>
             <span class="advanced-status" id="advanced-status"></span>
           </div>
         </div>
@@ -252,13 +253,13 @@
 
     <section class="drawer-section" id="preview-section">
       <header>
-        <h2>Preview dal vivo</h2>
-        <p>Monitor live di confidence e pinch distance.</p>
+        <h2>Anteprima dal vivo</h2>
+        <p>Monitoraggio in tempo reale di affidabilità e distanza di pinch.</p>
       </header>
       <div class="preview-grid">
         <div class="preview-card">
           <div class="preview-header">
-            <span>Confidence</span>
+            <span>Affidabilità</span>
             <span id="preview-confidence-value">0.00</span>
           </div>
           <div class="preview-bar">
@@ -267,7 +268,7 @@
         </div>
         <div class="preview-card">
           <div class="preview-header">
-            <span>Pinch distance</span>
+            <span>Distanza pinch</span>
             <span id="preview-pinch-value">0.0 px</span>
           </div>
           <div class="preview-bar">
@@ -278,31 +279,34 @@
     </section>
   </aside>
 
+  <div id="pinch-mode-toast" role="status" aria-live="polite"></div>
+
   <script>
     const gestureState = {
       available: [],
       active: new Set(),
-      threshold: 0.7,
       dirty: false,
     };
 
     const gestureSection = document.getElementById('gesture-section');
     const gestureCollapseBtn = document.getElementById('gesture-collapse');
-    const confidenceSlider = document.getElementById('confidence-threshold');
-    const confidenceValueEl = document.getElementById('confidence-threshold-value');
 
     function clamp01(value) {
       if (typeof value !== 'number' || Number.isNaN(value)) return 0;
       return Math.min(1, Math.max(0, value));
     }
 
-    function setThresholdDisplay(value, syncSlider = true) {
-      const pct = Math.round(clamp01(value) * 100);
-      if (syncSlider && confidenceSlider) {
-        confidenceSlider.value = String(pct);
-      }
-      if (confidenceValueEl) {
-        confidenceValueEl.textContent = pct + '%';
+    function translatePinchTrend(trend) {
+      if (!trend) return '-';
+      switch (trend) {
+        case 'opening':
+          return 'apertura';
+        case 'closing':
+          return 'chiusura';
+        case 'steady':
+          return 'stabile';
+        default:
+          return trend;
       }
     }
 
@@ -332,16 +336,6 @@
       setGestureSectionCollapsed(false);
     }
 
-    if (confidenceSlider) {
-      confidenceSlider.addEventListener('input', () => {
-        const pct = parseInt(confidenceSlider.value, 10);
-        if (Number.isNaN(pct)) return;
-        gestureState.threshold = clamp01(pct / 100);
-        setThresholdDisplay(gestureState.threshold, false);
-        markGesturesDirty();
-      });
-    }
-
     const advancedState = {
       settings: {
         confidence_min: 0.7,
@@ -352,6 +346,7 @@
         pinch_stability_px: 12,
         pinch_confirm_ms: 1000,
         corner_area_pct: 25,
+        pinch_corner_hold_s: 1.5,
         processing_fps: 25,
         frame_size: '800x600',
         brightness_contrast: 0,
@@ -443,6 +438,13 @@
         fromUI: (input) => parseInt(input.value, 10),
         toUI: (el, value) => { el.value = String(value); },
       },
+      pinch_corner_hold_s: {
+        input: document.getElementById('advanced-pinch-corner-hold'),
+        output: document.getElementById('advanced-pinch-corner-hold-value'),
+        format: (value) => `${value.toFixed(1)} s`,
+        fromUI: (input) => parseFloat(input.value),
+        toUI: (el, value) => { el.value = String(value); },
+      },
       corner_area_pct: {
         input: document.getElementById('advanced-corner-area'),
         output: document.getElementById('advanced-corner-area-value'),
@@ -474,7 +476,7 @@
       auto_exposure: {
         input: document.getElementById('advanced-auto-exposure'),
         output: null,
-        format: (value) => (value ? 'On' : 'Off'),
+        format: (value) => (value ? 'Attivo' : 'Disattivo'),
         fromUI: (input) => input.checked,
         toUI: (el, value) => { el.checked = !!value; },
       },
@@ -509,7 +511,7 @@
       visual_feedback: {
         input: document.getElementById('advanced-visual-feedback'),
         output: null,
-        format: (value) => (value ? 'On' : 'Off'),
+        format: (value) => (value ? 'Attivo' : 'Disattivo'),
         fromUI: (input) => input.checked,
         toUI: (el, value) => { el.checked = !!value; },
       },
@@ -521,13 +523,6 @@
       if (control.output) {
         const displayValue = Number.isFinite(value) ? value : advancedState.settings[name];
         control.output.textContent = control.format(displayValue);
-      }
-      if (name === 'confidence_min') {
-        const numeric = parseFloat(value);
-        if (!Number.isNaN(numeric)) {
-          gestureState.threshold = clamp01(numeric);
-        }
-        setThresholdDisplay(value);
       }
     }
 
@@ -568,9 +563,6 @@
         const value = control.fromUI(control.input);
         advancedState.settings[name] = value;
         updateAdvancedDisplay(name, value);
-        if (name === 'confidence_min') {
-          gestureState.threshold = clamp01(parseFloat(value));
-        }
         markAdvancedDirty();
       });
       if (control.input.type === 'range') {
@@ -728,18 +720,17 @@
         const ts = new Date(entry.ts * 1000).toLocaleTimeString();
         return `[${ts}] ${entry.level}: ${entry.msg}`;
       });
-      output.textContent = lines.join('\n') || 'Nessun log disponibile';
+      output.textContent = lines.join('\n') || 'Nessun registro disponibile';
     }
 
     function renderGestures() {
       const container = document.getElementById('gesture-list');
       if (!container) return;
-      setThresholdDisplay(gestureState.threshold);
       container.innerHTML = '';
       if (!gestureState.available.length) {
         const empty = document.createElement('div');
         empty.className = 'gesture-empty';
-        empty.textContent = 'Nessuna gesture disponibile';
+        empty.textContent = 'Nessun gesto disponibile';
         container.appendChild(empty);
         updateGestureSaveState();
         return;
@@ -777,13 +768,10 @@
         const data = await res.json();
         gestureState.available = data.available || [];
         gestureState.active = new Set(data.active || []);
-        if (typeof data.confidence_threshold === 'number') {
-          gestureState.threshold = clamp01(data.confidence_threshold);
-        }
         gestureState.dirty = false;
         renderGestures();
       } catch (err) {
-        document.getElementById('gesture-status').textContent = 'Errore caricamento gesture';
+        document.getElementById('gesture-status').textContent = 'Errore nel caricamento dei gesti';
       }
     }
 
@@ -794,7 +782,6 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             active: Array.from(gestureState.active),
-            confidence_threshold: gestureState.threshold,
           }),
         });
         const data = await res.json();
@@ -802,9 +789,6 @@
           throw new Error(data.error || 'Salvataggio fallito');
         }
         gestureState.active = new Set(data.active || []);
-        if (typeof data.confidence_threshold === 'number') {
-          gestureState.threshold = clamp01(data.confidence_threshold);
-        }
         gestureState.dirty = false;
         renderGestures();
         document.getElementById('gesture-status').textContent = 'Salvato ✔';
@@ -843,7 +827,7 @@
         debugState.enabled = !!data.debug;
         debugState.locked = !!data.locked;
       } catch (err) {
-        alert('Errore cambio debug: ' + err.message);
+        alert('Errore durante il cambio del debug: ' + err.message);
       } finally {
         debugState.busy = false;
         updateDebugButton();
@@ -871,9 +855,29 @@
       const pinch = typeof pinchData.distance_px === 'number' ? pinchData.distance_px : 0;
       previewConfValue.textContent = confidence.toFixed(precision);
       previewConfBar.style.width = `${Math.round(confidence * 100)}%`;
-      previewPinchValue.textContent = `${pinch.toFixed(precision)} px`;
+      const pinchMode = pinchData.mode_enabled ? ' (modalità attiva)' : ' (modalità disattivata)';
+      previewPinchValue.textContent = `${pinch.toFixed(precision)} px${pinchMode}`;
       const pinchRatio = Math.max(0, Math.min(1, pinch / 80));
       previewPinchBar.style.width = `${Math.round(pinchRatio * 100)}%`;
+    }
+
+    const pinchToast = document.getElementById('pinch-mode-toast');
+    if (pinchToast) {
+      pinchToast.dataset.visible = 'false';
+    }
+    let pinchToastTimer = null;
+    const pinchModeState = { enabled: null };
+
+    function showPinchToast(message) {
+      if (!pinchToast) return;
+      pinchToast.textContent = message;
+      pinchToast.dataset.visible = 'true';
+      if (pinchToastTimer) {
+        clearTimeout(pinchToastTimer);
+      }
+      pinchToastTimer = setTimeout(() => {
+        pinchToast.dataset.visible = 'false';
+      }, 2600);
     }
 
     async function refresh(){
@@ -884,9 +888,11 @@
         document.getElementById('confidence').textContent = (j.gesture.confidence||0).toFixed(precision);
         document.getElementById('hands').textContent = j.gesture.num_hands||0;
         const pinchData = j.pinch || { distance_px: 0, trend: '-' };
-        document.getElementById('pinch').textContent = (pinchData.distance_px||0).toFixed(precision) + 'px ' + (pinchData.trend||'-');
+        const pinchModeText = pinchData.mode_enabled ? '• Modalità pinch attiva' : '• Modalità pinch disattivata';
+        const trendText = translatePinchTrend(pinchData.trend);
+        document.getElementById('pinch').textContent = `${(pinchData.distance_px||0).toFixed(precision)}px ${trendText} ${pinchModeText}`;
 
-        const videoText = j.video.ok ? 'Online' : 'Offline';
+        const videoText = j.video.ok ? 'In linea' : 'Fuori linea';
         setStatus(document.getElementById('status-video'), j.video.ok, videoText);
         const mqttText = j.mqtt.connected ? `Connesso (${j.mqtt.host}:${j.mqtt.port})` : 'Disconnesso';
         setStatus(document.getElementById('status-mqtt'), j.mqtt.connected, mqttText);
@@ -902,11 +908,6 @@
         if (!gestureState.dirty && (j.active_gestures || []).length && gestureState.available.length) {
           gestureState.active = new Set(j.active_gestures);
           renderGestures();
-        }
-        if (!gestureState.dirty && typeof j.confidence_threshold === 'number') {
-          gestureState.threshold = clamp01(j.confidence_threshold);
-          setThresholdDisplay(gestureState.threshold);
-          updateGestureSaveState();
         }
         if (j.advanced) {
           const headerResolution = document.getElementById('header-resolution');
@@ -926,6 +927,10 @@
           }
         }
         updateLivePreview(j);
+        if (pinchData && typeof pinchData.mode_enabled === 'boolean' && pinchModeState.enabled !== pinchData.mode_enabled) {
+          pinchModeState.enabled = pinchData.mode_enabled;
+          showPinchToast(pinchData.mode_enabled ? 'Modalità pinch attivata' : 'Modalità pinch disattivata');
+        }
       }catch(e){
         console.error('Refresh error', e);
       }
