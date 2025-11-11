@@ -1,22 +1,24 @@
 version: "3.8"
 services:
   esp32-gesture-mqtt:
+    env_file:
+      - .env
     build: .
     container_name: esp32-gesture-mqtt
     environment:
-      SOURCE_URL: "http://##indirizzo IP ESP32##/stream"
-      VERBOSE: "1"
-      TARGET_FPS: "25"
-      MQTT_HOST: "## Indirizzo IP MQTT##"
-      MQTT_PORT: "1883"
-      MQTT_USER: "mqtt_user"
-      MQTT_PASSWORD: "tua password"
-      MQTT_BASE_TOPIC: "gesture32"
-      MQTT_DISCOVERY_PREFIX: "homeassistant"
-      PINCH_DEADZONE_PX: "8"
-      PINCH_HISTORY: "8"
-      CUSTOM_GESTURE_MAP: "{}"
-      PYTHONUNBUFFERED: "1"
+      SOURCE_URL: ${SOURCE_URL}
+      VERBOSE: ${VERBOSE}
+      TARGET_FPS: ${TARGET_FPS}
+      MQTT_HOST: ${MQTT_HOST}
+      MQTT_PORT: ${MQTT_PORT}
+      ## mqtt user ##: ${## mqtt user ##}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC}
+      MQTT_DISCOVERY_PREFIX: ${MQTT_DISCOVERY_PREFIX}
+      PINCH_DEADZONE_PX: ${PINCH_DEADZONE_PX}
+      PINCH_HISTORY: ${PINCH_HISTORY}
+      CUSTOM_GESTURE_MAP: ${CUSTOM_GESTURE_MAP}
+      PYTHONUNBUFFERED: ${PYTHONUNBUFFERED}
     ports:
       - "12345:12345"
     restart: unless-stopped

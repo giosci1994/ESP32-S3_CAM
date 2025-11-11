@@ -25,13 +25,13 @@ PINCH_DEADZONE_PX = int(os.getenv("PINCH_DEADZONE_PX", "8"))
 PINCH_HISTORY = int(os.getenv("PINCH_HISTORY", "8"))
 
 # MQTT
-MQTT_HOST = os.getenv("MQTT_HOST", "## indirizzo ip MQTT ##")
+MQTT_HOST = os.getenv("MQTT_HOST", "## indirizzo ip mqtt ##")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "password")
-MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "gesture32")
+## mqtt user ## = os.getenv("## mqtt user ##", "## mqtt user ##")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "## tua password ##")
+MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "## base topic mqtt ##")
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
-MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gesture32-server")
+MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "## base topic mqtt ##-server")
 
 logging.basicConfig(level=logging.DEBUG if VERBOSE else logging.INFO)
 log = logging.getLogger("gesture-server")
@@ -125,7 +125,7 @@ def mqtt_connect_and_discover():
 
     import paho.mqtt.client as mqtt
     mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
-    mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
+    mqtt_client.username_pw_set(## mqtt user ##, MQTT_PASSWORD)
     mqtt_client.will_set(f"{MQTT_BASE}/availability", "offline", retain=True)
     mqtt_client.on_connect = on_connect
     mqtt_client.on_disconnect = on_disconnect
