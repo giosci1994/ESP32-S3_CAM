@@ -10,6 +10,7 @@
   <header>
     <h1>ESP32 Cam + MediaPipe (800x600 @ 25fps)</h1>
     <p>UI: <code>/</code> • Stream: <code>/stream</code> • Snapshot: <code>/snapshot.jpg</code> • Health: <code>/health</code></p>
+    <button id="toggle-settings" class="settings-btn" type="button">⚙️ Settings</button>
   </header>
   <main>
     <section class="video">
@@ -22,7 +23,143 @@
       <div class="card"><div class="k">Pinch</div><div class="v" id="pinch">-</div></div>
     </section>
   </main>
+
+  <div id="settings-overlay"></div>
+  <aside id="settings-drawer">
+    <section class="drawer-section">
+      <header>
+        <h2>Status</h2>
+        <p>Controllo flusso video e connessione MQTT.</p>
+      </header>
+      <div class="status-list">
+        <div class="status-item" id="status-video">
+          <span class="label">Video stream</span>
+          <span class="value">-</span>
+        </div>
+        <div class="status-item" id="status-mqtt">
+          <span class="label">MQTT</span>
+          <span class="value">-</span>
+        </div>
+        <div class="status-item" id="status-error">
+          <span class="label">Ultimo errore</span>
+          <span class="value">-</span>
+        </div>
+      </div>
+      <div class="log-block" id="log-block">
+        <div class="log-header">Log (debug)</div>
+        <pre id="log-output">Debug non attivo</pre>
+      </div>
+    </section>
+
+    <section class="drawer-section">
+      <header>
+        <h2>Gesture MQTT</h2>
+        <p>Seleziona le gesture da inviare tramite MQTT.</p>
+      </header>
+      <div id="gesture-list" class="gesture-list"></div>
+      <div class="gesture-actions">
+        <button id="gesture-save" type="button">Salva selezione</button>
+        <span class="gesture-status" id="gesture-status"></span>
+      </div>
+    </section>
+  </aside>
+
   <script>
+    const gestureState = {
+      available: [],
+      active: new Set(),
+    };
+
+    function toggleDrawer(forceState) {
+      const isOpen = document.body.classList.contains('drawer-open');
+      const next = forceState === undefined ? !isOpen : !!forceState;
+      document.body.classList.toggle('drawer-open', next);
+    }
+
+    document.getElementById('toggle-settings').addEventListener('click', () => toggleDrawer());
+    document.getElementById('settings-overlay').addEventListener('click', () => toggleDrawer(false));
+
+    function setStatus(el, ok, text) {
+      const valueEl = el.querySelector('.value');
+      el.dataset.state = ok ? 'ok' : 'fail';
+      valueEl.textContent = text;
+    }
+
+    function renderLogs(logs, debugEnabled) {
+      const block = document.getElementById('log-block');
+      const output = document.getElementById('log-output');
+      block.dataset.active = debugEnabled ? 'on' : 'off';
+      if (!debugEnabled) {
+        output.textContent = 'Debug non attivo';
+        return;
+      }
+      const lines = logs.slice(-120).map(entry => {
+        const ts = new Date(entry.ts * 1000).toLocaleTimeString();
+        return `[${ts}] ${entry.level}: ${entry.msg}`;
+      });
+      output.textContent = lines.join('\n') || 'Nessun log disponibile';
+    }
+
+    function renderGestures() {
+      const container = document.getElementById('gesture-list');
+      container.innerHTML = '';
+      gestureState.available.forEach((name) => {
+        const id = `gesture-${name}`;
+        const wrapper = document.createElement('label');
+        wrapper.className = 'gesture-item';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = name;
+        input.checked = gestureState.active.has(name);
+        input.id = id;
+        input.addEventListener('change', () => {
+          if (input.checked) {
+            gestureState.active.add(name);
+          } else {
+            gestureState.active.delete(name);
+          }
+        });
+        const span = document.createElement('span');
+        span.textContent = name;
+        wrapper.appendChild(input);
+        wrapper.appendChild(span);
+        container.appendChild(wrapper);
+      });
+    }
+
+    async function loadGestures() {
+      try {
+        const res = await fetch('/gestures');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        gestureState.available = data.available || [];
+        gestureState.active = new Set(data.active || []);
+        renderGestures();
+      } catch (err) {
+        document.getElementById('gesture-status').textContent = 'Errore caricamento gesture';
+      }
+    }
+
+    async function saveGestures() {
+      try {
+        const res = await fetch('/gestures', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active: Array.from(gestureState.active) }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || 'Salvataggio fallito');
+        }
+        document.getElementById('gesture-status').textContent = 'Salvato ✔';
+        setTimeout(() => document.getElementById('gesture-status').textContent = '', 2000);
+      } catch (err) {
+        document.getElementById('gesture-status').textContent = 'Errore: ' + err.message;
+      }
+    }
+
+    document.getElementById('gesture-save').addEventListener('click', saveGestures);
+
     async function refresh(){
       try{
         const r = await fetch('/status'); const j = await r.json();
@@ -30,9 +167,27 @@
         document.getElementById('confidence').textContent = (j.gesture.confidence||0).toFixed(2);
         document.getElementById('hands').textContent = j.gesture.num_hands||0;
         document.getElementById('pinch').textContent = j.pinch.distance_px.toFixed(1) + 'px ' + j.pinch.trend;
-      }catch(e){}
+
+        const videoText = j.video.ok ? 'Online' : 'Offline';
+        setStatus(document.getElementById('status-video'), j.video.ok, videoText);
+        const mqttText = j.mqtt.connected ? `Connesso (${j.mqtt.host}:${j.mqtt.port})` : 'Disconnesso';
+        setStatus(document.getElementById('status-mqtt'), j.mqtt.connected, mqttText);
+        const errorText = j.last_error || j.mqtt.last_error || 'Nessun errore';
+        setStatus(document.getElementById('status-error'), !errorText || errorText === 'Nessun errore', errorText);
+
+        renderLogs(j.logs || [], j.debug);
+
+        if ((j.active_gestures || []).length && gestureState.available.length) {
+          gestureState.active = new Set(j.active_gestures);
+          renderGestures();
+        }
+      }catch(e){
+        console.error('Refresh error', e);
+      }
     }
-    setInterval(refresh, 800); refresh();
+
+    loadGestures();
+    setInterval(refresh, 1200); refresh();
   </script>
 </body>
 </html>
