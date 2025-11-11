@@ -26,31 +26,36 @@
 
   <div id="settings-overlay"></div>
   <aside id="settings-drawer">
-    <section class="drawer-section">
+    <section class="drawer-section" id="status-section">
       <header>
-        <h2>Stato</h2>
+        <div class="section-heading">
+          <h2>Stato</h2>
+          <button id="status-collapse" type="button" class="collapse-btn" data-collapse-target="status-content" aria-expanded="true" aria-controls="status-content">Nascondi</button>
+        </div>
         <p>Controllo del flusso video e della connessione MQTT.</p>
       </header>
-      <div class="status-list">
-        <div class="status-item" id="status-video">
-          <span class="label">Streaming video</span>
-          <span class="value">-</span>
+      <div class="drawer-content" id="status-content">
+        <div class="status-list">
+          <div class="status-item" id="status-video">
+            <span class="label">Streaming video</span>
+            <span class="value">-</span>
+          </div>
+          <div class="status-item" id="status-mqtt">
+            <span class="label">MQTT</span>
+            <span class="value">-</span>
+          </div>
+          <div class="status-item" id="status-error">
+            <span class="label">Ultimo errore</span>
+            <span class="value">-</span>
+          </div>
         </div>
-        <div class="status-item" id="status-mqtt">
-          <span class="label">MQTT</span>
-          <span class="value">-</span>
+        <div class="log-block" id="log-block">
+          <div class="log-header">
+            <span>Registri (debug)</span>
+            <button id="debug-toggle" type="button" class="pill-btn" data-state="off">Attiva debug</button>
+          </div>
+          <pre id="log-output">Debug non attivo</pre>
         </div>
-        <div class="status-item" id="status-error">
-          <span class="label">Ultimo errore</span>
-          <span class="value">-</span>
-        </div>
-      </div>
-      <div class="log-block" id="log-block">
-        <div class="log-header">
-          <span>Registri (debug)</span>
-          <button id="debug-toggle" type="button" class="pill-btn" data-state="off">Attiva debug</button>
-        </div>
-        <pre id="log-output">Debug non attivo</pre>
       </div>
     </section>
 
@@ -58,25 +63,31 @@
       <header>
         <div class="section-heading">
           <h2>Gesti MQTT</h2>
-          <button id="gesture-collapse" type="button" class="collapse-btn" aria-expanded="true" aria-controls="gesture-content">Nascondi</button>
+          <button id="gesture-collapse" type="button" class="collapse-btn" data-collapse-target="gesture-content" aria-expanded="true" aria-controls="gesture-content">Nascondi</button>
         </div>
         <p>Seleziona i gesti da inviare tramite MQTT.</p>
       </header>
-      <div id="gesture-content" class="gesture-content">
-        <div id="gesture-list" class="gesture-list"></div>
-        <div class="gesture-actions">
-          <button id="gesture-save" type="button">Salva selezione</button>
-          <span class="gesture-status" id="gesture-status"></span>
+      <div id="gesture-content" class="drawer-content">
+        <div class="gesture-content">
+          <div id="gesture-list" class="gesture-list"></div>
+          <div class="gesture-actions">
+            <button id="gesture-save" type="button">Salva selezione</button>
+            <span class="gesture-status" id="gesture-status"></span>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="drawer-section" id="advanced-section">
       <header>
-        <h2>Impostazioni avanzate</h2>
+        <div class="section-heading">
+          <h2>Impostazioni avanzate</h2>
+          <button id="advanced-collapse" type="button" class="collapse-btn" data-collapse-target="advanced-content" aria-expanded="true" aria-controls="advanced-content">Nascondi</button>
+        </div>
         <p>Affina la sensibilità dei gesti, le prestazioni video e i parametri di pubblicazione.</p>
       </header>
-      <div class="advanced-groups">
+      <div class="drawer-content" id="advanced-content">
+        <div class="advanced-groups">
         <div class="advanced-card">
           <h3><span class="advanced-icon">🖐️</span><span>Rilevamento e sensibilità</span></h3>
           <div class="advanced-grid">
@@ -248,31 +259,37 @@
             <span class="advanced-status" id="advanced-status"></span>
           </div>
         </div>
+        </div>
       </div>
     </section>
 
     <section class="drawer-section" id="preview-section">
       <header>
-        <h2>Anteprima dal vivo</h2>
+        <div class="section-heading">
+          <h2>Anteprima dal vivo</h2>
+          <button id="preview-collapse" type="button" class="collapse-btn" data-collapse-target="preview-content" aria-expanded="true" aria-controls="preview-content">Nascondi</button>
+        </div>
         <p>Monitoraggio in tempo reale di affidabilità e distanza di pinch.</p>
       </header>
-      <div class="preview-grid">
-        <div class="preview-card">
-          <div class="preview-header">
-            <span>Affidabilità</span>
-            <span id="preview-confidence-value">0.00</span>
+      <div class="drawer-content" id="preview-content">
+        <div class="preview-grid">
+          <div class="preview-card">
+            <div class="preview-header">
+              <span>Affidabilità</span>
+              <span id="preview-confidence-value">0.00</span>
+            </div>
+            <div class="preview-bar">
+              <div class="preview-fill" id="preview-confidence-bar"></div>
+            </div>
           </div>
-          <div class="preview-bar">
-            <div class="preview-fill" id="preview-confidence-bar"></div>
-          </div>
-        </div>
-        <div class="preview-card">
-          <div class="preview-header">
-            <span>Distanza pinch</span>
-            <span id="preview-pinch-value">0.0 px</span>
-          </div>
-          <div class="preview-bar">
-            <div class="preview-fill" id="preview-pinch-bar"></div>
+          <div class="preview-card">
+            <div class="preview-header">
+              <span>Distanza pinch</span>
+              <span id="preview-pinch-value">0.0 px</span>
+            </div>
+            <div class="preview-bar">
+              <div class="preview-fill" id="preview-pinch-bar"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -287,9 +304,6 @@
       active: new Set(),
       dirty: false,
     };
-
-    const gestureSection = document.getElementById('gesture-section');
-    const gestureCollapseBtn = document.getElementById('gesture-collapse');
 
     function clamp01(value) {
       if (typeof value !== 'number' || Number.isNaN(value)) return 0;
@@ -310,6 +324,21 @@
       }
     }
 
+    function localizePinchMode(mode) {
+      if (!mode) return '';
+      switch (mode) {
+        case 'left':
+          return 'sinistra';
+        case 'right':
+          return 'destra';
+        case 'attiva':
+        case 'on':
+          return 'attiva';
+        default:
+          return mode;
+      }
+    }
+
     function updateGestureSaveState() {
       const btn = document.getElementById('gesture-save');
       if (!btn) return;
@@ -321,20 +350,30 @@
       updateGestureSaveState();
     }
 
-    function setGestureSectionCollapsed(collapsed) {
-      if (!gestureSection || !gestureCollapseBtn) return;
-      gestureSection.classList.toggle('collapsed', collapsed);
-      gestureCollapseBtn.setAttribute('aria-expanded', String(!collapsed));
-      gestureCollapseBtn.textContent = collapsed ? 'Mostra' : 'Nascondi';
+    function setupCollapsibleSection(sectionId, buttonId, contentId) {
+      const section = document.getElementById(sectionId);
+      const button = document.getElementById(buttonId);
+      const content = contentId ? document.getElementById(contentId) : null;
+      if (!section || !button) return;
+      const apply = (collapsed) => {
+        section.dataset.collapsed = collapsed ? 'true' : 'false';
+        button.setAttribute('aria-expanded', String(!collapsed));
+        button.textContent = collapsed ? 'Mostra' : 'Nascondi';
+        if (content) {
+          content.setAttribute('aria-hidden', String(collapsed));
+        }
+      };
+      button.addEventListener('click', () => {
+        const collapsed = section.dataset.collapsed === 'true';
+        apply(!collapsed);
+      });
+      apply(false);
     }
 
-    if (gestureCollapseBtn && gestureSection) {
-      gestureCollapseBtn.addEventListener('click', () => {
-        const collapsed = !gestureSection.classList.contains('collapsed');
-        setGestureSectionCollapsed(collapsed);
-      });
-      setGestureSectionCollapsed(false);
-    }
+    setupCollapsibleSection('status-section', 'status-collapse', 'status-content');
+    setupCollapsibleSection('gesture-section', 'gesture-collapse', 'gesture-content');
+    setupCollapsibleSection('advanced-section', 'advanced-collapse', 'advanced-content');
+    setupCollapsibleSection('preview-section', 'preview-collapse', 'preview-content');
 
     const advancedState = {
       settings: {
@@ -855,8 +894,9 @@
       const pinch = typeof pinchData.distance_px === 'number' ? pinchData.distance_px : 0;
       previewConfValue.textContent = confidence.toFixed(precision);
       previewConfBar.style.width = `${Math.round(confidence * 100)}%`;
-      const pinchMode = pinchData.mode_enabled ? ' (modalità attiva)' : ' (modalità disattivata)';
-      previewPinchValue.textContent = `${pinch.toFixed(precision)} px${pinchMode}`;
+      const pinchModeLabel = localizePinchMode(pinchData.mode || (pinchData.mode_enabled ? 'attiva' : ''));
+      const pinchModeSuffix = pinchModeLabel ? ` (modalità pinch ${pinchModeLabel})` : '';
+      previewPinchValue.textContent = `${pinch.toFixed(precision)} px${pinchModeSuffix}`;
       const pinchRatio = Math.max(0, Math.min(1, pinch / 80));
       previewPinchBar.style.width = `${Math.round(pinchRatio * 100)}%`;
     }
@@ -866,7 +906,7 @@
       pinchToast.dataset.visible = 'false';
     }
     let pinchToastTimer = null;
-    const pinchModeState = { enabled: null };
+    const pinchModeState = { mode: null };
 
     function showPinchToast(message) {
       if (!pinchToast) return;
@@ -888,9 +928,12 @@
         document.getElementById('confidence').textContent = (j.gesture.confidence||0).toFixed(precision);
         document.getElementById('hands').textContent = j.gesture.num_hands||0;
         const pinchData = j.pinch || { distance_px: 0, trend: '-' };
-        const pinchModeText = pinchData.mode_enabled ? '• Modalità pinch attiva' : '• Modalità pinch disattivata';
         const trendText = translatePinchTrend(pinchData.trend);
-        document.getElementById('pinch').textContent = `${(pinchData.distance_px||0).toFixed(precision)}px ${trendText} ${pinchModeText}`;
+        const pinchParts = [`${(pinchData.distance_px||0).toFixed(precision)}px`];
+        if (trendText && trendText !== '-') pinchParts.push(trendText);
+        const pinchModeLabel = localizePinchMode(pinchData.mode || (pinchData.mode_enabled ? 'attiva' : ''));
+        if (pinchModeLabel) pinchParts.push(`Modalità pinch ${pinchModeLabel}`);
+        document.getElementById('pinch').textContent = pinchParts.join(' • ');
 
         const videoText = j.video.ok ? 'In linea' : 'Fuori linea';
         setStatus(document.getElementById('status-video'), j.video.ok, videoText);
@@ -927,9 +970,19 @@
           }
         }
         updateLivePreview(j);
-        if (pinchData && typeof pinchData.mode_enabled === 'boolean' && pinchModeState.enabled !== pinchData.mode_enabled) {
-          pinchModeState.enabled = pinchData.mode_enabled;
-          showPinchToast(pinchData.mode_enabled ? 'Modalità pinch attivata' : 'Modalità pinch disattivata');
+        if (pinchData) {
+          const previousMode = pinchModeState.mode;
+          const nextMode = typeof pinchData.mode === 'string'
+            ? pinchData.mode
+            : (pinchData.mode_enabled ? 'attiva' : null);
+          if (previousMode !== nextMode) {
+            pinchModeState.mode = nextMode;
+            if (nextMode) {
+              showPinchToast(`Modalità pinch ${localizePinchMode(nextMode)} attivata`);
+            } else if (previousMode) {
+              showPinchToast(`Modalità pinch ${localizePinchMode(previousMode)} disattivata`);
+            }
+          }
         }
       }catch(e){
         console.error('Refresh error', e);

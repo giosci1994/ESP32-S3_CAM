@@ -1,3 +1,4 @@
 # Local environment overrides
 .env
 server/.env
+server/state.json

@@ -16,10 +16,11 @@
 
 - ✅ **Stream MJPEG** da ESP32-S3/OV2640 → server Docker
 - ✋ **Gesture hands** ottimizzate (V di vittoria, OK, mano aperta, quattro angoli)
-- 🤏 **Pinch** (pollice–indice): distanza **px** / **normalizzata** + **trend** (_opening / closing / steady_)
+- 🤏 **Pinch** (pollice–indice): distanza **px** / **normalizzata** + **trend** (_opening / closing / steady_) e modalità dedicate **sinistra/destra** (attivazione dagli angoli, disattivazione automatica, sensori binari per Home Assistant)
 - 📡 **MQTT** con **Home Assistant Discovery** (sensori auto-creati)
 - ⚙️ **UI Web** pronta: `/`, `/stream`, `/status`, `/snapshot.jpg`, `/health`
 - 🐳 **Docker Compose** e **.env** già pronti (no segreti nel codice)
+- 💾 **Impostazioni persistenti**: preferenze avanzate e selezione gesti salvate tra i riavvii
 
 ---
 
@@ -105,6 +106,8 @@ Sensori via discovery:
 - `sensor.esp32_pinch_distance_px` — distanza pollice‑indice (px)
 - `sensor.esp32_pinch_distance_norm` — distanza normalizzata (0..1)
 - `sensor.esp32_pinch_state` — `opening` / `closing` / `steady`
+- `binary_sensor.esp32_pinch_mode_left` — modalità pinch sinistra attiva/disattiva
+- `binary_sensor.esp32_pinch_mode_right` — modalità pinch destra attiva/disattiva
 
 ## Sensori MQTT
 
@@ -162,6 +165,8 @@ Tips:
 ## 🧭 Istruzioni pannello impostazioni
 
 > Le modifiche vengono applicate automaticamente (auto-save ≈0,7 s) mentre il pulsante **Salva parametri** resta disponibile per un salvataggio manuale.
+
+- Ogni sezione del pannello laterale può essere compressa/espansa con il pulsante **Nascondi/Mostra** dedicato.
 
 ### Stato
 
