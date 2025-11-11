@@ -24,7 +24,19 @@ body.drawer-open #settings-overlay{ opacity:1; pointer-events:auto; }
 body.drawer-open #settings-drawer{ transform:translateX(0); }
 .drawer-section{ margin-bottom:32px; }
 .drawer-section header h2{ margin:0; font-size:18px; }
+.section-heading{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.collapse-btn{ padding:4px 12px; border-radius:999px; border:none; background:rgba(255,255,255,0.08); color:#d0ddff;
+    font-size:12px; font-weight:600; cursor:pointer; transition:background 0.2s ease, color 0.2s ease; }
+.collapse-btn:hover{ background:rgba(255,255,255,0.14); color:#ffffff; }
+.drawer-section.collapsed .gesture-content{ display:none; }
 .drawer-section header p{ margin:6px 0 14px; font-size:13px; color:#a4b2d6; }
+.gesture-content{ display:grid; gap:16px; }
+.gesture-controls{ display:flex; flex-direction:column; gap:8px; padding:12px; border-radius:10px;
+    background:rgba(20,22,32,0.88); border:1px solid rgba(255,255,255,0.08); }
+.gesture-controls label{ font-size:13px; color:#c5d4ff; font-weight:600; }
+.slider-row{ display:flex; align-items:center; gap:12px; }
+#confidence-threshold{ flex:1; accent-color:#4f7bff; }
+.slider-value{ font-size:13px; color:#f0f3ff; font-weight:700; min-width:48px; text-align:right; }
 .status-list{ display:grid; gap:10px; margin-bottom:18px; }
 .status-item{ display:flex; justify-content:space-between; align-items:center; padding:10px 12px;
     border-radius:10px; border:1px solid rgba(255,255,255,0.08); background:rgba(20,20,26,0.9); font-size:14px; }
@@ -48,9 +60,12 @@ body.drawer-open #settings-drawer{ transform:translateX(0); }
 .gesture-item{ display:flex; gap:10px; align-items:center; padding:10px 12px; background:rgba(23,25,33,0.9);
     border-radius:10px; border:1px solid rgba(255,255,255,0.08); font-size:14px; cursor:pointer; }
 .gesture-item input{ accent-color:#4f7bff; width:16px; height:16px; }
+.gesture-empty{ padding:12px; border-radius:10px; border:1px dashed rgba(255,255,255,0.12); color:#7f8fb5; font-size:13px;
+    background:rgba(16,18,26,0.85); text-align:center; }
 .gesture-actions{ margin-top:14px; display:flex; gap:12px; align-items:center; }
 #gesture-save{ padding:8px 16px; border:none; border-radius:999px; background:#2a3b62; color:#eef3ff; font-weight:600;
     cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.35); }
 #gesture-save:hover{ background:#3a4e85; }
+#gesture-save:disabled{ opacity:0.5; cursor:not-allowed; box-shadow:none; }
 .gesture-status{ font-size:12px; color:#a4b2d6; }
 @media (max-width:980px){ main{ grid-template-columns:1fr; } }
