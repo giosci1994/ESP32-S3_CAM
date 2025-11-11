@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # Override via env if needed
-SOURCE_URL="${SOURCE_URL:-http://192.168.1.24/stream}"
+SOURCE_URL="${SOURCE_URL:-http://## indirizzo ip ESP32 ##/stream}"
 VERBOSE="${VERBOSE:-1}"
 TARGET_FPS="${TARGET_FPS:-25}"
-MQTT_HOST="${MQTT_HOST:-192.168.1.100}"
+MQTT_HOST="${MQTT_HOST:-## Indirizzo ip MQTT##}"
 MQTT_PORT="${MQTT_PORT:-1883}"
 MQTT_USER="${MQTT_USER:-mqtt_user}"
-MQTT_PASSWORD="${MQTT_PASSWORD:-Casafiga94?}"
+MQTT_PASSWORD="${MQTT_PASSWORD:-## tua password ##?}"
 MQTT_BASE_TOPIC="${MQTT_BASE_TOPIC:-gesture32}"
 MQTT_DISCOVERY_PREFIX="${MQTT_DISCOVERY_PREFIX:-homeassistant}"
 PINCH_DEADZONE_PX="${PINCH_DEADZONE_PX:-8}"

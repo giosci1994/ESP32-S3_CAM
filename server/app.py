@@ -13,7 +13,7 @@ except Exception as e:
     mp_ok = False
 
 # --- Env / settings ---
-SOURCE_URL = os.getenv("SOURCE_URL", "http://192.168.1.24/stream")
+SOURCE_URL = os.getenv("SOURCE_URL", "http://## indirizzo ip esp32 ##/stream")
 TARGET_FPS = float(os.getenv("TARGET_FPS", "25"))
 FRAME_DELAY = 1.0 / TARGET_FPS
 TARGET_SIZE = (800, 600)
@@ -25,7 +25,7 @@ PINCH_DEADZONE_PX = int(os.getenv("PINCH_DEADZONE_PX", "8"))
 PINCH_HISTORY = int(os.getenv("PINCH_HISTORY", "8"))
 
 # MQTT
-MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.100")
+MQTT_HOST = os.getenv("MQTT_HOST", "## indirizzo ip MQTT ##")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "password")

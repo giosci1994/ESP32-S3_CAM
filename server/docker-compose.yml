@@ -4,13 +4,13 @@ services:
     build: .
     container_name: esp32-gesture-mqtt
     environment:
-      SOURCE_URL: "http://192.168.1.24/stream"
+      SOURCE_URL: "http://##indirizzo IP ESP32##/stream"
       VERBOSE: "1"
       TARGET_FPS: "25"
-      MQTT_HOST: "192.168.1.100"
+      MQTT_HOST: "## Indirizzo IP MQTT##"
       MQTT_PORT: "1883"
       MQTT_USER: "mqtt_user"
-      MQTT_PASSWORD: "Casafiga94?"
+      MQTT_PASSWORD: "tua password"
       MQTT_BASE_TOPIC: "gesture32"
       MQTT_DISCOVERY_PREFIX: "homeassistant"
       PINCH_DEADZONE_PX: "8"

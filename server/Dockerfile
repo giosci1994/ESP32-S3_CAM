@@ -12,13 +12,13 @@ COPY templates /app/templates
 COPY static /app/static
 
 # Defaults (override at runtime)
-ENV SOURCE_URL="http://192.168.1.24/stream"
+ENV SOURCE_URL="http://##indirizzo ip esp32##/stream"
 ENV VERBOSE="1"
 ENV TARGET_FPS="25"
-ENV MQTT_HOST="192.168.1.100"
+ENV MQTT_HOST="## indirizzo ip MQTT ##"
 ENV MQTT_PORT="1883"
 ENV MQTT_USER="mqtt_user"
-ENV MQTT_PASSWORD="Casafiga94?"
+ENV MQTT_PASSWORD="Tua Password"
 ENV MQTT_BASE_TOPIC="gesture32"
 ENV MQTT_DISCOVERY_PREFIX="homeassistant"
 ENV PINCH_DEADZONE_PX="8"
