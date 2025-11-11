@@ -84,6 +84,8 @@ GESTURE_CHOICES = [
     "Angolo in alto a destra",
     "Angolo in basso a sinistra",
     "Angolo in basso a destra",
+    "Swipe verso sinistra",
+    "Swipe verso destra",
 ]
 
 DEFAULT_GESTURE_MAP = {
@@ -94,6 +96,8 @@ DEFAULT_GESTURE_MAP = {
     "point_top_right": "Angolo in alto a destra",
     "point_bottom_left": "Angolo in basso a sinistra",
     "point_bottom_right": "Angolo in basso a destra",
+    "swipe_left": "Swipe verso sinistra",
+    "swipe_right": "Swipe verso destra",
 }
 
 try:
@@ -145,6 +149,7 @@ def _advanced_defaults():
         "pinch_stability_px": 16,
         "pinch_confirm_ms": 1000,
         "corner_area_pct": 25,
+        "pinch_corner_hold_s": 1.5,
         "processing_fps": int(round(TARGET_FPS)),
         "frame_size": "{}x{}".format(*TARGET_SIZE),
         "brightness_contrast": 0,
@@ -184,7 +189,12 @@ _apply_logging_level()
 
 app = Flask(__name__)
 last_gesture = {"label":"unknown","confidence":0.0,"num_hands":0}
-last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":None,"delta_px":0.0}
+last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":None,"delta_px":0.0,"mode_enabled":False,"mode_since":0.0}
+pinch_mode_state = {"enabled": False, "since": 0.0, "feedback_until": 0.0, "feedback_text": ""}
+_corner_hold_tracker = {
+    "point_top_left": {"start": None},
+    "point_top_right": {"start": None},
+}
 last_error = ""
 last_frame_ts = 0.0
 
@@ -292,7 +302,13 @@ def mqtt_connect_and_discover():
                 "name": "ESP32 Pinch State",
                 "state_topic": f"{MQTT_BASE}/state/pinch_state",
                 "icon": "mdi:gesture",
-            }
+            },
+            {
+                "uniq": f"{MQTT_BASE}_pinch_mode",
+                "name": "ESP32 Pinch Mode",
+                "state_topic": f"{MQTT_BASE}/state/pinch_mode",
+                "icon": "mdi:gesture-tap-hold",
+            },
         ]
         for s in sensors:
             obj = {
@@ -375,6 +391,12 @@ def mqtt_publish_state():
             qos=0,
             retain=False,
         )
+        mqtt_client.publish(
+            f"{MQTT_BASE}/state/pinch_mode",
+            "on" if pinch_mode_state.get("enabled") else "off",
+            qos=0,
+            retain=False,
+        )
     except Exception as e:
         log.error(f"[MQTT] publish error: {e}", exc_info=True)
 
@@ -438,7 +460,7 @@ def _finger_up(pts, tip, pip, delta=0.02):
 def _classify_gesture(landmarks, handedness_label):
     import numpy as np
     pts = np.array([(lm.x, lm.y) for lm in landmarks.landmark], dtype=np.float32)
-    WRIST=0; THUMB_TIP=4; THUMB_IP=3; INDEX_TIP=8; INDEX_PIP=6; MIDDLE_TIP=12; MIDDLE_PIP=10; RING_TIP=16; RING_PIP=14; PINKY_TIP=20; PINKY_PIP=18; INDEX_MCP=5
+    WRIST=0; THUMB_TIP=4; THUMB_IP=3; INDEX_TIP=8; INDEX_PIP=6; MIDDLE_TIP=12; MIDDLE_PIP=10; RING_TIP=16; RING_PIP=14; PINKY_TIP=20; PINKY_PIP=18; INDEX_MCP=5; MIDDLE_MCP=9; RING_MCP=13; PINKY_MCP=17
 
     def dist(a, b): return float(np.linalg.norm(pts[a]-pts[b]))
 
@@ -452,26 +474,34 @@ def _classify_gesture(landmarks, handedness_label):
     }
     up_count = sum(1 for v in fingers.values() if v)
     d_thumb_index = dist(THUMB_TIP, INDEX_TIP)
+    palm_center = tuple(np.mean(pts[[WRIST, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]], axis=0))
+    meta = {
+        "fingers": fingers,
+        "is_open_palm": False,
+        "palm_center": palm_center,
+        "index_tip": tuple(pts[INDEX_TIP]),
+    }
 
     # Mano aperta: tutte le dita sollevate e ben distanziate
     if all(fingers.values()):
         span = dist(INDEX_TIP, PINKY_TIP)
         conf = 0.92 + min(0.06, span) * 0.5
-        return "open_palm", min(conf, 0.99)
+        meta["is_open_palm"] = True
+        return "open_palm", min(conf, 0.99), meta
 
     # V di vittoria: indice e medio sollevati e separati, altre dita chiuse
     if fingers["index"] and fingers["middle"] and not fingers["ring"] and not fingers["pinky"]:
         separation = dist(INDEX_TIP, MIDDLE_TIP)
         if separation > 0.045:
             conf = 0.88 + min(0.07, separation - 0.045) * 1.5
-            return "victory", min(conf, 0.99)
+            return "victory", min(conf, 0.99), meta
 
     # OK: pollice e indice a contatto, indice piegato, altre dita prevalentemente sollevate
     index_bent = pts[INDEX_TIP,1] > pts[INDEX_PIP,1] - 0.005
     support_fingers = sum(1 for name in ("middle", "ring", "pinky") if fingers[name])
     if d_thumb_index < 0.05 and index_bent and support_fingers >= 2:
         conf = 0.86 + (0.05 - d_thumb_index) * 2.2
-        return "ok", min(conf, 0.99)
+        return "ok", min(conf, 0.99), meta
 
     # Indicazione angoli: solo indice sollevato, direzione diagonale ben definita
     if fingers["index"] and not any(fingers[name] for name in ("middle", "ring", "pinky")):
@@ -492,12 +522,73 @@ def _classify_gesture(landmarks, handedness_label):
                 vert = "bottom"
             if horiz and vert:
                 conf = 0.82 + min(0.08, mag - 0.1) * 1.2
-                return f"point_{vert}_{horiz}", min(conf, 0.96)
+                return f"point_{vert}_{horiz}", min(conf, 0.96), meta
 
-    return "unknown", 0.3
+    return "unknown", 0.3, meta
 
-# --- Pinch calculation ---
+# --- Pinch calculation & swipe detection ---
 _pinch_hist = deque(maxlen=PINCH_HISTORY)
+_swipe_state = {}
+
+
+def _swipe_tracker(hand_label):
+    key = hand_label or "Unknown"
+    if key not in _swipe_state:
+        _swipe_state[key] = {
+            "samples": deque(maxlen=14),
+            "last_direction": None,
+            "last_time": 0.0,
+        }
+    return _swipe_state[key]
+
+
+def _detect_swipe(hand_label, meta, frame_width, settings_snapshot, confidence):
+    if not meta:
+        return None
+    min_conf = float(settings_snapshot.get("confidence_min", CONFIDENCE_THRESHOLD))
+    if confidence < min_conf:
+        tracker = _swipe_tracker(hand_label)
+        tracker["samples"].clear()
+        return None
+    if not meta.get("is_open_palm"):
+        tracker = _swipe_tracker(hand_label)
+        tracker["samples"].clear()
+        return None
+
+    now = time.time()
+    palm_center = meta.get("palm_center") or (0.5, 0.5)
+    center_x = float(palm_center[0]) * frame_width
+    tracker = _swipe_tracker(hand_label)
+    samples = tracker["samples"]
+    samples.append((now, center_x))
+    window = 0.6
+    while samples and now - samples[0][0] > window:
+        samples.popleft()
+    if len(samples) < 3:
+        return None
+    start_time, start_x = samples[0]
+    end_time, end_x = samples[-1]
+    duration = end_time - start_time
+    if duration < 0.12 or duration > window:
+        return None
+    movement = end_x - start_x
+    threshold = float(settings_snapshot.get("movement_sensitivity_px", 8) or 8)
+    if abs(movement) < threshold:
+        return None
+
+    direction = "right" if movement > 0 else "left"
+    if tracker["last_direction"] == direction and (now - tracker["last_time"]) < 0.5:
+        return None
+
+    tracker["last_direction"] = direction
+    tracker["last_time"] = now
+    samples.clear()
+    samples.append((now, center_x))
+
+    bonus = max(0.0, abs(movement) - threshold)
+    conf = 0.82 + min(0.15, bonus / max(threshold, 1.0) * 0.15)
+    conf = min(0.99, conf)
+    return ("swipe_right" if direction == "right" else "swipe_left"), conf
 
 
 def _store_frame_bytes(jpeg_bytes: bytes):
@@ -564,6 +655,50 @@ def _pinch_trend(new_px, stability_px=None):
         return "steady", delta
     return ("opening" if delta > 0 else "closing"), delta
 
+
+def _localize_pinch_trend(trend):
+    mapping = {
+        "opening": "apertura",
+        "closing": "chiusura",
+        "steady": "stabile",
+    }
+    if trend is None:
+        return "-"
+    return mapping.get(trend, trend)
+
+
+def _update_pinch_mode(candidate, settings_snapshot):
+    hold_seconds = float(settings_snapshot.get("pinch_corner_hold_s", 1.5) or 1.5)
+    hold_seconds = max(0.2, min(5.0, hold_seconds))
+    now = time.time()
+    active_label = candidate[0] if candidate else None
+    for label, tracker in _corner_hold_tracker.items():
+        if label != active_label:
+            tracker["start"] = None
+    if not candidate:
+        return
+    label, confidence = candidate
+    min_conf = float(settings_snapshot.get("confidence_min", CONFIDENCE_THRESHOLD))
+    if confidence < min_conf:
+        _corner_hold_tracker[label]["start"] = None
+        return
+    tracker = _corner_hold_tracker[label]
+    if tracker["start"] is None:
+        tracker["start"] = now
+        return
+    elapsed = now - tracker["start"]
+    if elapsed < hold_seconds:
+        return
+    desired = (label == "point_top_right")
+    if pinch_mode_state["enabled"] == desired:
+        tracker["start"] = now
+        return
+    pinch_mode_state["enabled"] = desired
+    pinch_mode_state["since"] = now
+    pinch_mode_state["feedback_until"] = now + 2.5
+    pinch_mode_state["feedback_text"] = "Modalità pinch attivata" if desired else "Modalità pinch disattivata"
+    tracker["start"] = None
+
 def _processing_loop():
     global last_gesture, last_pinch, last_error, last_frame_ts
     log.info("Processing thread starting")
@@ -600,14 +735,30 @@ def _processing_loop():
                     beta = bc_val
                     frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
+                frame_h, frame_w = frame.shape[:2]
+
                 pinch_updated = False
+                corner_candidate = None
                 if ctx:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     res = ctx.process(rgb)
 
                     if res.multi_hand_landmarks and res.multi_handedness:
                         for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
-                            g, c = _classify_gesture(lm, hd.classification[0].label)
+                            g, c, meta = _classify_gesture(lm, hd.classification[0].label)
+                            base_label = g
+                            if base_label in ("point_top_left", "point_top_right"):
+                                if not corner_candidate or c > corner_candidate[1]:
+                                    corner_candidate = (base_label, c)
+                            swipe_candidate = _detect_swipe(
+                                hd.classification[0].label,
+                                meta,
+                                frame_w,
+                                settings_snapshot,
+                                c,
+                            )
+                            if swipe_candidate:
+                                g, c = swipe_candidate
                             if c > conf:
                                 label, conf = g, c
                             nh += 1
@@ -620,9 +771,8 @@ def _processing_loop():
                                     mp_styles.get_default_hand_connections_style(),
                                 )
 
-                        h, w = frame.shape[:2]
                         lm0 = res.multi_hand_landmarks[0]
-                        pinch_px, pinch_norm = _pinch_distance(lm0, w, h)
+                        pinch_px, pinch_norm = _pinch_distance(lm0, frame_w, frame_h)
                         pinch_trend, pinch_delta = _pinch_trend(
                             pinch_px,
                             settings_snapshot.get("pinch_stability_px", PINCH_DEADZONE_PX),
@@ -632,8 +782,12 @@ def _processing_loop():
                             "distance_norm": float(pinch_norm),
                             "trend": pinch_trend,
                             "delta_px": float(pinch_delta),
+                            "mode_enabled": pinch_mode_state["enabled"],
+                            "mode_since": pinch_mode_state["since"],
                         }
                         pinch_updated = True
+
+                _update_pinch_mode(corner_candidate, settings_snapshot)
 
                 if not pinch_updated:
                     _pinch_hist.clear()
@@ -642,7 +796,12 @@ def _processing_loop():
                         "distance_norm": 0.0,
                         "trend": None,
                         "delta_px": 0.0,
+                        "mode_enabled": pinch_mode_state["enabled"],
+                        "mode_since": pinch_mode_state["since"],
                     }
+                else:
+                    last_pinch["mode_enabled"] = pinch_mode_state["enabled"]
+                    last_pinch["mode_since"] = pinch_mode_state["since"]
 
                 mapped_label = CUSTOM_GESTURE_MAP.get(label, label)
                 last_gesture = {
@@ -665,19 +824,30 @@ def _processing_loop():
                 display_prec = int(settings_snapshot.get("float_precision", 2))
                 display_prec = min(4, max(1, display_prec))
                 conf_txt = f"{last_gesture['confidence']:.{display_prec}f}"
-                txt1 = f"Gesture: {last_gesture['label']}  Conf: {conf_txt}  Hands: {last_gesture['num_hands']}"
+                txt1 = f"Gesto: {last_gesture['label']}  Aff.: {conf_txt}  Mani: {last_gesture['num_hands']}"
                 cv2.putText(frame, txt1, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
                 pinch_px = last_pinch.get('distance_px', 0.0)
                 pinch_delta = last_pinch.get('delta_px', 0.0)
                 pinch_txt = f"{pinch_px:.{display_prec}f}"
-                pinch_state = last_pinch.get('trend') or "-"
-                txt2 = f"Pinch: {pinch_txt}px  {pinch_state} ({pinch_delta:+.0f}px)"
+                pinch_state = _localize_pinch_trend(last_pinch.get('trend'))
+                pinch_mode_txt = 'ATTIVA' if pinch_mode_state.get('enabled') else 'DISATTIVATA'
+                txt2 = f"Pinch: {pinch_txt}px  {pinch_state} ({pinch_delta:+.0f}px)  Modalità: {pinch_mode_txt}"
                 cv2.putText(frame, txt2, (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (120, 220, 255), 2, cv2.LINE_AA)
 
                 if settings_snapshot.get("visual_feedback", True):
                     color = (60, 220, 120) if last_gesture['confidence'] >= CONFIDENCE_THRESHOLD else (70, 70, 220)
                     center = (target_size[0] - 60, target_size[1] - 60)
                     cv2.circle(frame, center, 32, color, 4)
+
+                feedback_until = pinch_mode_state.get("feedback_until", 0.0)
+                if feedback_until and feedback_until > time.time():
+                    msg = pinch_mode_state.get("feedback_text") or ""
+                    if msg:
+                        box_width = int(target_size[0] * 0.7)
+                        box_x = max(16, (target_size[0] - box_width) // 2)
+                        box_y = 96
+                        cv2.rectangle(frame, (box_x, box_y), (box_x + box_width, box_y + 48), (25, 25, 28), -1)
+                        cv2.putText(frame, msg, (box_x + 18, box_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 255, 230), 2, cv2.LINE_AA)
 
                 ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 if not ok:
@@ -761,7 +931,7 @@ def status():
 
 @app.route("/gestures", methods=["GET", "POST"])
 def gestures_config():
-    global ACTIVE_GESTURES, CONFIDENCE_THRESHOLD
+    global ACTIVE_GESTURES
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         active = data.get("active", [])
@@ -772,21 +942,11 @@ def gestures_config():
         if not filtered:
             log.warning("Attempt to set empty or invalid gestures: %s", active)
             return jsonify({"ok": False, "error": "No valid gestures"}), 400
-        threshold = data.get("confidence_threshold", CONFIDENCE_THRESHOLD)
-        try:
-            threshold = float(threshold)
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "Confidence threshold non valido"}), 400
-        threshold = _clamp(threshold, 0.0, 1.0)
         ACTIVE_GESTURES = set(filtered)
-        CONFIDENCE_THRESHOLD = threshold
-        ADVANCED_SETTINGS["confidence_min"] = CONFIDENCE_THRESHOLD
         log.info("Active gestures updated: %s", sorted(ACTIVE_GESTURES))
-        log.info("Confidence threshold set to %.2f", CONFIDENCE_THRESHOLD)
         return jsonify({
             "ok": True,
             "active": sorted(ACTIVE_GESTURES),
-            "confidence_threshold": CONFIDENCE_THRESHOLD,
         })
     return jsonify({
         "available": AVAILABLE_GESTURES,
@@ -891,6 +1051,7 @@ def advanced_settings():
     _parse_int("pinch_stability_px", 4, 20, ADVANCED_SETTINGS["pinch_stability_px"])
     _parse_int("pinch_confirm_ms", 300, 2000, ADVANCED_SETTINGS["pinch_confirm_ms"])
     _parse_int("corner_area_pct", 10, 50, ADVANCED_SETTINGS["corner_area_pct"])
+    _parse_float("pinch_corner_hold_s", 0.5, 3.0, ADVANCED_SETTINGS["pinch_corner_hold_s"])
     _parse_int("processing_fps", 10, 30, ADVANCED_SETTINGS["processing_fps"])
     _parse_int("mqtt_publish_interval", 200, 1000, ADVANCED_SETTINGS["mqtt_publish_interval"])
     _parse_int("float_precision", 1, 4, ADVANCED_SETTINGS["float_precision"])
