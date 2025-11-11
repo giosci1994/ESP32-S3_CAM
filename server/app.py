@@ -142,7 +142,7 @@ def _advanced_defaults():
         "temporal_smoothing": 5,
         "hold_delay_ms": 700,
         "pinch_threshold_norm": 0.05,
-        "pinch_stability_px": 12,
+        "pinch_stability_px": 16,
         "pinch_confirm_ms": 1000,
         "corner_area_pct": 25,
         "processing_fps": int(round(TARGET_FPS)),
@@ -184,9 +184,14 @@ _apply_logging_level()
 
 app = Flask(__name__)
 last_gesture = {"label":"unknown","confidence":0.0,"num_hands":0}
-last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":"steady","delta_px":0.0}
+last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":None,"delta_px":0.0}
 last_error = ""
 last_frame_ts = 0.0
+
+_frame_condition = threading.Condition()
+_latest_frame_seq = 0
+_latest_frame_jpeg = None
+_processing_thread = None
 
 AVAILABLE_GESTURES = list(GESTURE_CHOICES)
 for mapped in CUSTOM_GESTURE_MAP.values():
@@ -363,7 +368,13 @@ def mqtt_publish_state():
             qos=0,
             retain=False,
         )
-        mqtt_client.publish(f"{MQTT_BASE}/state/pinch_state", last_pinch.get("trend","steady"), qos=0, retain=False)
+        pinch_state = last_pinch.get("trend")
+        mqtt_client.publish(
+            f"{MQTT_BASE}/state/pinch_state",
+            pinch_state if pinch_state is not None else "none",
+            qos=0,
+            retain=False,
+        )
     except Exception as e:
         log.error(f"[MQTT] publish error: {e}", exc_info=True)
 
@@ -488,6 +499,39 @@ def _classify_gesture(landmarks, handedness_label):
 # --- Pinch calculation ---
 _pinch_hist = deque(maxlen=PINCH_HISTORY)
 
+
+def _store_frame_bytes(jpeg_bytes: bytes):
+    global _latest_frame_seq, _latest_frame_jpeg
+    if not jpeg_bytes:
+        return
+    with _frame_condition:
+        _latest_frame_jpeg = jpeg_bytes
+        _latest_frame_seq += 1
+        _frame_condition.notify_all()
+
+
+def _wait_for_frame(last_seq: int, timeout: float = 2.0):
+    end_time = time.time() + timeout
+    with _frame_condition:
+        while True:
+            if _latest_frame_jpeg is not None and _latest_frame_seq > max(last_seq, -1):
+                chunk = (
+                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                    + _latest_frame_jpeg
+                    + b"\r\n"
+                )
+                return chunk, _latest_frame_seq
+            remaining = end_time - time.time()
+            if remaining <= 0:
+                return None, last_seq
+            _frame_condition.wait(remaining)
+
+
+def _get_latest_jpeg():
+    with _frame_condition:
+        return _latest_frame_jpeg
+
+
 def _pinch_distance(lm, w, h):
     t = lm.landmark[4]   # THUMB_TIP
     i = lm.landmark[8]   # INDEX_TIP
@@ -497,111 +541,186 @@ def _pinch_distance(lm, w, h):
     dist_norm = ((t.x - i.x)**2 + (t.y - i.y)**2) ** 0.5
     return dist_px, dist_norm
 
-def _pinch_trend(new_px):
+def _pinch_trend(new_px, stability_px=None):
+    if stability_px is None:
+        stability_px = PINCH_DEADZONE_PX
+    try:
+        threshold = max(1.0, float(stability_px))
+    except (TypeError, ValueError):
+        threshold = PINCH_DEADZONE_PX
+
     _pinch_hist.append(new_px)
-    if len(_pinch_hist) < 4:
+    if len(_pinch_hist) < 6:
         return "steady", 0.0
-    delta = _pinch_hist[-1] - _pinch_hist[0]
-    if abs(delta) < PINCH_DEADZONE_PX:
+
+    half = len(_pinch_hist) // 2
+    if half < 3:
+        half = len(_pinch_hist) - 1
+    history = list(_pinch_hist)
+    start_avg = sum(history[:half]) / max(1, half)
+    end_avg = sum(history[-half:]) / max(1, half)
+    delta = end_avg - start_avg
+    if abs(delta) < threshold:
         return "steady", delta
     return ("opening" if delta > 0 else "closing"), delta
 
-# ------------- Stream / processing -------------
-def frame_generator():
+def _processing_loop():
     global last_gesture, last_pinch, last_error, last_frame_ts
+    log.info("Processing thread starting")
+
     if not mp_ok:
-        log.warning("MediaPipe not available, streaming raw frames.")
+        log.warning("MediaPipe not available, streaming raw frames without gesture detection.")
 
-    ctx = mp_hands.Hands(static_image_mode=False, max_num_hands=2, model_complexity=1,
-                         min_detection_confidence=0.5, min_tracking_confidence=0.5) if mp_ok else None
-    prev = time.time()
-    last_pub = 0.0
+    while True:
+        ctx = mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            model_complexity=1,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        ) if mp_ok else None
 
-    for frame in _frames():
-        settings_snapshot = dict(ADVANCED_SETTINGS)
-        label, conf, nh = "none", 0.0, 0
-        last_frame_ts = time.time()
-        last_error = ""
+        prev = time.time()
+        last_pub = 0.0
 
-        target_size = _FRAME_SIZE_CHOICES.get(settings_snapshot.get("frame_size"), TARGET_SIZE)
-        if target_size != frame.shape[1::-1]:
-            frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
+        try:
+            for frame in _frames():
+                settings_snapshot = dict(ADVANCED_SETTINGS)
+                label, conf, nh = "none", 0.0, 0
+                last_frame_ts = time.time()
+                last_error = ""
 
-        bc_val = float(settings_snapshot.get("brightness_contrast", 0) or 0)
-        if abs(bc_val) > 0.01:
-            alpha = 1.0 + (bc_val / 100.0)
-            beta = bc_val
-            frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+                target_size = _FRAME_SIZE_CHOICES.get(settings_snapshot.get("frame_size"), TARGET_SIZE)
+                if target_size != frame.shape[1::-1]:
+                    frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
 
-        if ctx:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = ctx.process(rgb)
+                bc_val = float(settings_snapshot.get("brightness_contrast", 0) or 0)
+                if abs(bc_val) > 0.01:
+                    alpha = 1.0 + (bc_val / 100.0)
+                    beta = bc_val
+                    frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
-            if res.multi_hand_landmarks and res.multi_handedness:
-                for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
-                    g, c = _classify_gesture(lm, hd.classification[0].label)
-                    if c > conf: label, conf = g, c
-                    nh += 1
-                    if settings_snapshot.get("show_landmarks", True):
-                        mp_drawing.draw_landmarks(
-                            frame,
-                            lm,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_styles.get_default_hand_landmarks_style(),
-                            mp_styles.get_default_hand_connections_style(),
+                pinch_updated = False
+                if ctx:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    res = ctx.process(rgb)
+
+                    if res.multi_hand_landmarks and res.multi_handedness:
+                        for lm, hd in zip(res.multi_hand_landmarks, res.multi_handedness):
+                            g, c = _classify_gesture(lm, hd.classification[0].label)
+                            if c > conf:
+                                label, conf = g, c
+                            nh += 1
+                            if settings_snapshot.get("show_landmarks", True):
+                                mp_drawing.draw_landmarks(
+                                    frame,
+                                    lm,
+                                    mp_hands.HAND_CONNECTIONS,
+                                    mp_styles.get_default_hand_landmarks_style(),
+                                    mp_styles.get_default_hand_connections_style(),
+                                )
+
+                        h, w = frame.shape[:2]
+                        lm0 = res.multi_hand_landmarks[0]
+                        pinch_px, pinch_norm = _pinch_distance(lm0, w, h)
+                        pinch_trend, pinch_delta = _pinch_trend(
+                            pinch_px,
+                            settings_snapshot.get("pinch_stability_px", PINCH_DEADZONE_PX),
                         )
+                        last_pinch = {
+                            "distance_px": float(pinch_px),
+                            "distance_norm": float(pinch_norm),
+                            "trend": pinch_trend,
+                            "delta_px": float(pinch_delta),
+                        }
+                        pinch_updated = True
 
-                # Pinch: usa la prima mano
-                h, w = frame.shape[:2]
-                lm0 = res.multi_hand_landmarks[0]
-                pinch_px, pinch_norm = _pinch_distance(lm0, w, h)
-                pinch_trend, pinch_delta = _pinch_trend(pinch_px)
-                last_pinch = {
-                    "distance_px": float(pinch_px),
-                    "distance_norm": float(pinch_norm),
-                    "trend": pinch_trend,
-                    "delta_px": float(pinch_delta)
+                if not pinch_updated:
+                    _pinch_hist.clear()
+                    last_pinch = {
+                        "distance_px": 0.0,
+                        "distance_norm": 0.0,
+                        "trend": None,
+                        "delta_px": 0.0,
+                    }
+
+                mapped_label = CUSTOM_GESTURE_MAP.get(label, label)
+                last_gesture = {
+                    "label": mapped_label,
+                    "confidence": float(conf),
+                    "num_hands": int(nh),
                 }
 
-        mapped_label = CUSTOM_GESTURE_MAP.get(label, label)
-        last_gesture = {"label": mapped_label, "confidence": float(conf), "num_hands": int(nh)}
+                nowt = time.time()
+                interval = max(0.05, float(settings_snapshot.get("mqtt_publish_interval", 400)) / 1000.0)
+                if nowt - last_pub > interval:
+                    mqtt_publish_state()
+                    last_pub = nowt
 
-        # MQTT publish (throttled)
-        nowt = time.time()
-        interval = max(0.05, float(settings_snapshot.get("mqtt_publish_interval", 400)) / 1000.0)
-        if nowt - last_pub > interval:
-            mqtt_publish_state()
-            last_pub = nowt
+                if frame.shape[1::-1] != target_size:
+                    frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
 
-        if frame.shape[1::-1] != target_size:
-            frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
-        # Overlay info
-        info_box_w = max(220, target_size[0] - 40)
-        cv2.rectangle(frame, (10,10), (10 + info_box_w, 72), (0,0,0), -1)
-        display_prec = int(settings_snapshot.get("float_precision", 2))
-        display_prec = min(4, max(1, display_prec))
-        conf_txt = f"{last_gesture['confidence']:.{display_prec}f}"
-        txt1 = f"Gesture: {last_gesture['label']}  Conf: {conf_txt}  Hands: {last_gesture['num_hands']}"
-        cv2.putText(frame, txt1, (16,36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
-        pinch_px = last_pinch.get('distance_px', 0.0)
-        pinch_delta = last_pinch.get('delta_px', 0.0)
-        pinch_txt = f"{pinch_px:.{display_prec}f}"
-        txt2 = f"Pinch: {pinch_txt}px  {last_pinch['trend']} ({pinch_delta:+.0f}px)"
-        cv2.putText(frame, txt2, (16,64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (120,220,255), 2, cv2.LINE_AA)
+                info_box_w = max(220, target_size[0] - 40)
+                cv2.rectangle(frame, (10, 10), (10 + info_box_w, 72), (0, 0, 0), -1)
+                display_prec = int(settings_snapshot.get("float_precision", 2))
+                display_prec = min(4, max(1, display_prec))
+                conf_txt = f"{last_gesture['confidence']:.{display_prec}f}"
+                txt1 = f"Gesture: {last_gesture['label']}  Conf: {conf_txt}  Hands: {last_gesture['num_hands']}"
+                cv2.putText(frame, txt1, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+                pinch_px = last_pinch.get('distance_px', 0.0)
+                pinch_delta = last_pinch.get('delta_px', 0.0)
+                pinch_txt = f"{pinch_px:.{display_prec}f}"
+                pinch_state = last_pinch.get('trend') or "-"
+                txt2 = f"Pinch: {pinch_txt}px  {pinch_state} ({pinch_delta:+.0f}px)"
+                cv2.putText(frame, txt2, (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (120, 220, 255), 2, cv2.LINE_AA)
 
-        if settings_snapshot.get("visual_feedback", True):
-            color = (60, 220, 120) if last_gesture['confidence'] >= CONFIDENCE_THRESHOLD else (70, 70, 220)
-            center = (target_size[0] - 60, target_size[1] - 60)
-            cv2.circle(frame, center, 32, color, 4)
+                if settings_snapshot.get("visual_feedback", True):
+                    color = (60, 220, 120) if last_gesture['confidence'] >= CONFIDENCE_THRESHOLD else (70, 70, 220)
+                    center = (target_size[0] - 60, target_size[1] - 60)
+                    cv2.circle(frame, center, 32, color, 4)
 
-        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        if not ok:
+                ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                if not ok:
+                    continue
+                _store_frame_bytes(buf.tobytes())
+
+                now = time.time()
+                dt = now - prev
+                if dt < FRAME_DELAY:
+                    time.sleep(FRAME_DELAY - dt)
+                prev = time.time()
+
+        except Exception as exc:
+            last_error = f"processing_error: {type(exc).__name__}: {exc}"
+            log.error("Processing loop error: %s", last_error, exc_info=True)
+            time.sleep(0.6)
+        finally:
+            if ctx:
+                ctx.close()
+
+
+def frame_generator():
+    _ensure_processing_thread()
+    seq = -1
+    while True:
+        chunk, seq = _wait_for_frame(seq, timeout=5.0)
+        if chunk is None:
+            time.sleep(0.2)
             continue
+        yield chunk
 
-        now = time.time(); dt = now - prev
-        if dt < FRAME_DELAY: time.sleep(FRAME_DELAY - dt)
-        prev = time.time()
-        yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
+
+def _ensure_processing_thread():
+    global _processing_thread
+    with _frame_condition:
+        if _processing_thread and _processing_thread.is_alive():
+            return
+        _processing_thread = threading.Thread(
+            target=_processing_loop,
+            name="gesture-processing",
+            daemon=True,
+        )
+        _processing_thread.start()
 
 # ------------- Flask endpoints -------------
 @app.route("/")
@@ -707,12 +826,16 @@ def _one_frame():
 
 @app.route("/snapshot.jpg")
 def snapshot():
+    jpeg = _get_latest_jpeg()
+    if jpeg:
+        return Response(jpeg, mimetype="image/jpeg")
     frame = _one_frame()
     if frame is None:
         return ("", 503)
     size = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS.get("frame_size"), TARGET_SIZE)
     ok, buf = cv2.imencode(".jpg", cv2.resize(frame, size), [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-    if not ok: return ("", 503)
+    if not ok:
+        return ("", 503)
     return Response(buf.tobytes(), mimetype="image/jpeg")
 
 # ------------- App boot -------------
@@ -721,6 +844,7 @@ def _boot():
     mqtt_connect_and_discover()
 
 _boot()
+_ensure_processing_thread()
 @app.route("/advanced-settings", methods=["GET", "POST"])
 def advanced_settings():
     global ADVANCED_SETTINGS, CONFIDENCE_THRESHOLD, TARGET_FPS, FRAME_DELAY, TARGET_SIZE, MQTT_BASE

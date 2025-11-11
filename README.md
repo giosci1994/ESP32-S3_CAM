@@ -159,6 +159,60 @@ Tips:
 
 ---
 
+## 🧭 Istruzioni pannello impostazioni
+
+> Le modifiche vengono applicate automaticamente (auto-save ≈0,7 s) mentre il pulsante **Salva parametri** resta disponibile per un salvataggio manuale.
+
+### Stato
+
+- **Video stream / MQTT / Ultimo errore** — indicatori di connettività e diagnostica.
+- **Attiva debug** — abilita il logging dettagliato nel riquadro sottostante.
+- **Log (debug)** — mostra gli ultimi messaggi quando il debug è attivo.
+
+### Gesture MQTT
+
+- **Confidence minima** — percentuale minima di confidenza richiesta prima di inviare una gesture via MQTT.
+- **Lista gesture** — selezione delle gesture da pubblicare (quelle escluse non verranno inviate).
+- **Salva selezione** — forza il salvataggio immediato della lista gesture/threshold.
+
+### Advanced Settings
+
+**A) Rilevamento e Sensibilità**
+
+- **Confidence minima** — soglia (0,5–0,95) per considerare valida una gesture rilevata.
+- **Sensibilità movimento (px)** — distanza minima in pixel per valutare spostamenti/pinch.
+- **Smoothing temporale** — numero di frame mediati per stabilizzare le coordinate.
+- **Ritardo conferma gesture** — tempo minimo (ms) in cui la gesture deve restare stabile prima della conferma.
+
+**B) Pinch e Interazione Complessa**
+
+- **Soglia di pinch** — distanza normalizzata tra pollice e indice per riconoscere un pinch.
+- **Stabilità pinch (px)** — variazione minima necessaria per passare da *steady* a *opening/closing* (trend più stabile di default).
+- **Tempo conferma pinch** — durata (ms) richiesta per validare il pinch rilevato.
+- **Area angolo (%)** — percentuale di schermo riservata alle gesture di puntamento sugli angoli.
+
+**C) Prestazioni e Filtri**
+
+- **Frame rate elaborazione** — FPS massimi usati dal server per il processing.
+- **Dimensione frame** — risoluzione elaborata (320×240 / 640×480 / 800×600).
+- **Filtro luminosità / contrasto** — offset ±50% per correggere ambienti scuri o controluce.
+- **Auto-exposure compensation** — chiede alla camera (se supporta) di gestire automaticamente l'esposizione.
+
+**D) MQTT e Output**
+
+- **Frequenza aggiornamento MQTT** — intervallo tra pubblicazioni consecutive (ms).
+- **Precisione valori float** — numero di cifre decimali inviate per confidence/pinch.
+- **Topic base dinamico** — topic radice usato dal server e dai sensori auto-discovery.
+- **Mostra landmark MediaPipe** — disegna gli scheletri delle mani sull'overlay.
+- **Feedback visivo** — abilita il cerchio di stato nell'anteprima.
+
+### Preview dal vivo
+
+- **Confidence** — barra e valore aggiornati secondo la confidenza del frame corrente.
+- **Pinch distance** — barra e valore con la distanza pollice-indice (trend nullo quando nessuna mano è in vista).
+
+---
+
 ## 🧯 Troubleshooting
 
 - **UI si vede ma niente gesture** → controlla logs container, verifica stream e MediaPipe.

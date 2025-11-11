@@ -367,6 +367,32 @@
       updating: false,
     };
 
+    const ADVANCED_AUTOSAVE_DELAY_MS = 700;
+    let advancedAutosaveTimer = null;
+
+    function cancelAdvancedAutosave() {
+      if (advancedAutosaveTimer) {
+        clearTimeout(advancedAutosaveTimer);
+        advancedAutosaveTimer = null;
+      }
+    }
+
+    function scheduleAdvancedAutosave() {
+      if (!advancedState.dirty || advancedState.updating) return;
+      if (advancedAutosaveTimer) {
+        clearTimeout(advancedAutosaveTimer);
+      }
+      advancedAutosaveTimer = setTimeout(() => {
+        advancedAutosaveTimer = null;
+        if (!advancedState.dirty) return;
+        if (advancedState.saving) {
+          scheduleAdvancedAutosave();
+          return;
+        }
+        saveAdvancedSettings({ autosave: true });
+      }, ADVANCED_AUTOSAVE_DELAY_MS);
+    }
+
     const advancedControls = {
       confidence_min: {
         input: document.getElementById('advanced-confidence-min'),
@@ -532,6 +558,7 @@
       if (advancedState.updating) return;
       advancedState.dirty = true;
       updateAdvancedSaveState();
+      scheduleAdvancedAutosave();
     }
 
     Object.entries(advancedControls).forEach(([name, control]) => {
@@ -569,6 +596,7 @@
         advancedState.updating = false;
         advancedState.dirty = false;
         updateAdvancedSaveState();
+        cancelAdvancedAutosave();
       } catch (err) {
         const status = document.getElementById('advanced-status');
         if (status) status.textContent = 'Errore caricamento: ' + err.message;
@@ -577,12 +605,13 @@
       }
     }
 
-    async function saveAdvancedSettings() {
+    async function saveAdvancedSettings({ autosave = false } = {}) {
       if (advancedState.saving) return;
+      cancelAdvancedAutosave();
       advancedState.saving = true;
       updateAdvancedSaveState();
       const status = document.getElementById('advanced-status');
-      if (status) status.textContent = 'Salvataggio in corso…';
+      if (status) status.textContent = autosave ? 'Applicazione parametri…' : 'Salvataggio in corso…';
       try {
         const payload = collectAdvancedSettings();
         const res = await fetch('/advanced-settings', {
@@ -604,8 +633,17 @@
         advancedState.updating = false;
         advancedState.dirty = false;
         updateAdvancedSaveState();
-        if (status) status.textContent = 'Parametri salvati ✔';
-        setTimeout(() => { if (status) status.textContent = ''; }, 2200);
+        cancelAdvancedAutosave();
+        if (status) {
+          const successText = autosave ? 'Impostazioni applicate ✔' : 'Parametri salvati ✔';
+          status.textContent = successText;
+          const clearDelay = autosave ? 1500 : 2200;
+          setTimeout(() => {
+            if (status.textContent === successText) {
+              status.textContent = '';
+            }
+          }, clearDelay);
+        }
       } catch (err) {
         if (status) status.textContent = 'Errore: ' + err.message;
       } finally {
@@ -616,6 +654,7 @@
     }
 
     async function resetAdvancedSettings() {
+      cancelAdvancedAutosave();
       const status = document.getElementById('advanced-status');
       if (status) status.textContent = 'Ripristino…';
       try {
@@ -637,6 +676,7 @@
         advancedState.updating = false;
         advancedState.dirty = false;
         updateAdvancedSaveState();
+        cancelAdvancedAutosave();
         if (status) status.textContent = 'Default ripristinati';
         setTimeout(() => { if (status) status.textContent = ''; }, 2000);
       } catch (err) {
