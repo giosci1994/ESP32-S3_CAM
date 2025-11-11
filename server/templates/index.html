@@ -46,7 +46,10 @@
         </div>
       </div>
       <div class="log-block" id="log-block">
-        <div class="log-header">Log (debug)</div>
+        <div class="log-header">
+          <span>Log (debug)</span>
+          <button id="debug-toggle" type="button" class="pill-btn" data-state="off">Attiva debug</button>
+        </div>
         <pre id="log-output">Debug non attivo</pre>
       </div>
     </section>
@@ -68,6 +71,13 @@
     const gestureState = {
       available: [],
       active: new Set(),
+      dirty: false,
+    };
+
+    const debugState = {
+      enabled: false,
+      locked: false,
+      busy: false,
     };
 
     function toggleDrawer(forceState) {
@@ -118,6 +128,7 @@
           } else {
             gestureState.active.delete(name);
           }
+          gestureState.dirty = true;
         });
         const span = document.createElement('span');
         span.textContent = name;
@@ -134,6 +145,7 @@
         const data = await res.json();
         gestureState.available = data.available || [];
         gestureState.active = new Set(data.active || []);
+        gestureState.dirty = false;
         renderGestures();
       } catch (err) {
         document.getElementById('gesture-status').textContent = 'Errore caricamento gesture';
@@ -151,6 +163,9 @@
         if (!res.ok || data.ok === false) {
           throw new Error(data.error || 'Salvataggio fallito');
         }
+        gestureState.active = new Set(data.active || []);
+        gestureState.dirty = false;
+        renderGestures();
         document.getElementById('gesture-status').textContent = 'Salvato ✔';
         setTimeout(() => document.getElementById('gesture-status').textContent = '', 2000);
       } catch (err) {
@@ -159,6 +174,41 @@
     }
 
     document.getElementById('gesture-save').addEventListener('click', saveGestures);
+
+    function updateDebugButton() {
+      const btn = document.getElementById('debug-toggle');
+      if (!btn) return;
+      btn.dataset.state = debugState.enabled ? 'on' : 'off';
+      btn.textContent = debugState.enabled ? 'Disattiva debug' : 'Attiva debug';
+      btn.disabled = debugState.busy || debugState.locked;
+      btn.title = debugState.locked ? 'Debug forzato dalla configurazione' : '';
+    }
+
+    async function toggleDebug() {
+      if (debugState.locked || debugState.busy) return;
+      debugState.busy = true;
+      updateDebugButton();
+      try {
+        const res = await fetch('/debug', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !debugState.enabled }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || 'Cambio debug fallito');
+        }
+        debugState.enabled = !!data.debug;
+        debugState.locked = !!data.locked;
+      } catch (err) {
+        alert('Errore cambio debug: ' + err.message);
+      } finally {
+        debugState.busy = false;
+        updateDebugButton();
+      }
+    }
+
+    document.getElementById('debug-toggle').addEventListener('click', toggleDebug);
 
     async function refresh(){
       try{
@@ -175,9 +225,13 @@
         const errorText = j.last_error || j.mqtt.last_error || 'Nessun errore';
         setStatus(document.getElementById('status-error'), !errorText || errorText === 'Nessun errore', errorText);
 
-        renderLogs(j.logs || [], j.debug);
+        debugState.enabled = !!j.debug;
+        debugState.locked = !!j.debug_locked;
+        updateDebugButton();
 
-        if ((j.active_gestures || []).length && gestureState.available.length) {
+        renderLogs(j.logs || [], debugState.enabled);
+
+        if (!gestureState.dirty && (j.active_gestures || []).length && gestureState.available.length) {
           gestureState.active = new Set(j.active_gestures);
           renderGestures();
         }
