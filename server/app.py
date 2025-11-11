@@ -65,7 +65,79 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "0").lower() in {"1", "true", "yes", "on"}
 if VERBOSE:
     DEBUG_MODE = True
 DEBUG_LOCKED = VERBOSE
-CUSTOM_GESTURE_MAP = json.loads(os.getenv("CUSTOM_GESTURE_MAP", "{}"))
+# Confidence filtering
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+try:
+    _conf_threshold_env = float(os.getenv("CONFIDENCE_THRESHOLD", "0.7"))
+except (TypeError, ValueError):
+    _conf_threshold_env = 0.7
+CONFIDENCE_THRESHOLD = _clamp(_conf_threshold_env, 0.0, 1.0)
+
+# Gesture catalog
+GESTURE_CHOICES = [
+    "Mano aperta",
+    "Pugno",
+    "Pollice in su",
+    "Pollice in giù",
+    "OK",
+    "V di vittoria",
+    "Uno (indice su)",
+    "Punta (indice)",
+    "Punta a sinistra",
+    "Punta a destra",
+    "Pinch",
+    "Pinch + trascina in verticale",
+    "Pinch + trascina in orizzontale",
+    "Scorrimento a sinistra",
+    "Scorrimento a destra",
+    "Scorrimento verso l’alto",
+    "Scorrimento verso il basso",
+    "Cerchio orario",
+    "Cerchio antiorario",
+    "Spinta in avanti",
+    "Tiro indietro",
+    "Mano aperta mantenuta",
+    "Due mani che si allontanano",
+    "Due mani che si avvicinano",
+    "Rotazione a due mani",
+    "Selezione angolo + pinch di conferma",
+    "Gesto dal bordo sinistro",
+    "Gesto dal bordo destro",
+    "Gesto dal bordo superiore",
+    "Selezione su griglia 3×3",
+    "Rock (corna)",
+    "V mantenuta",
+]
+
+DEFAULT_GESTURE_MAP = {
+    "open_palm": "Mano aperta",
+    "fist": "Pugno",
+    "ok": "OK",
+    "peace": "V di vittoria",
+    "rock": "Rock (corna)",
+    "one": "Uno (indice su)",
+    "point": "Punta (indice)",
+    "point_left": "Punta a sinistra",
+    "point_right": "Punta a destra",
+    "pinch": "Pinch",
+    "0_fingers": "Pugno",
+    "1_fingers": "Uno (indice su)",
+    "3_fingers": "Mano aperta mantenuta",
+    "4_fingers": "Mano aperta",
+    "2_fingers": "V mantenuta",
+}
+
+try:
+    _custom_map_env = json.loads(os.getenv("CUSTOM_GESTURE_MAP", "{}"))
+    if not isinstance(_custom_map_env, dict):
+        _custom_map_env = {}
+except json.JSONDecodeError:
+    _custom_map_env = {}
+
+CUSTOM_GESTURE_MAP = DEFAULT_GESTURE_MAP.copy()
+CUSTOM_GESTURE_MAP.update({k: v for k, v in _custom_map_env.items() if isinstance(k, str) and isinstance(v, str)})
 
 # Pinch tuning
 PINCH_DEADZONE_PX = int(os.getenv("PINCH_DEADZONE_PX", "8"))
@@ -117,36 +189,36 @@ last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":"steady","delta_px
 last_error = ""
 last_frame_ts = 0.0
 
-AVAILABLE_GESTURES = {
-    "unknown",
-    "none",
-    "open_palm",
-    "fist",
-    "peace",
-    "rock",
-    "ok",
-    "point_left",
-    "point_right",
-    "point",
-    "pinch",
-    "one",
-    "0_fingers",
-    "1_fingers",
-    "2_fingers",
-    "3_fingers",
-    "4_fingers",
-}
-AVAILABLE_GESTURES.update(CUSTOM_GESTURE_MAP.values())
+AVAILABLE_GESTURES = list(GESTURE_CHOICES)
+for mapped in CUSTOM_GESTURE_MAP.values():
+    if mapped not in AVAILABLE_GESTURES:
+        AVAILABLE_GESTURES.append(mapped)
+AVAILABLE_GESTURES_SET = set(AVAILABLE_GESTURES)
+AVAILABLE_GESTURES_SET.update({"unknown", "none"})
 
 def _parse_active_gestures(raw: str):
     if not raw:
         return set()
     items = [item.strip() for item in raw.split(",") if item.strip()]
-    return {item for item in items if item in AVAILABLE_GESTURES or item == "*"}
+    parsed = set()
+    for item in items:
+        if item == "*":
+            parsed.add(item)
+            continue
+        if item in AVAILABLE_GESTURES_SET:
+            parsed.add(item)
+            continue
+        mapped = CUSTOM_GESTURE_MAP.get(item)
+        if mapped and mapped in AVAILABLE_GESTURES_SET:
+            parsed.add(mapped)
+    return parsed
 
 
 _DEFAULT_ACTIVE = _parse_active_gestures(os.getenv("ACTIVE_GESTURES", ""))
-ACTIVE_GESTURES = set(AVAILABLE_GESTURES if "*" in _DEFAULT_ACTIVE else _DEFAULT_ACTIVE)
+if "*" in _DEFAULT_ACTIVE:
+    ACTIVE_GESTURES = set(AVAILABLE_GESTURES)
+else:
+    ACTIVE_GESTURES = set(_DEFAULT_ACTIVE)
 if not ACTIVE_GESTURES:
     ACTIVE_GESTURES = set(AVAILABLE_GESTURES)
 
@@ -264,7 +336,11 @@ def mqtt_publish_state():
         publish_label = current_label
         publish_conf = last_gesture.get('confidence', 0.0)
         publish_hands = last_gesture.get('num_hands', 0)
-        if ACTIVE_GESTURES and current_label not in ACTIVE_GESTURES and current_label not in {"unknown", "none"}:
+        if publish_conf < CONFIDENCE_THRESHOLD:
+            publish_label = "none"
+            publish_conf = 0.0
+            publish_hands = 0
+        elif ACTIVE_GESTURES and publish_label not in {"unknown", "none"} and publish_label not in ACTIVE_GESTURES:
             publish_label = "inactive"
             publish_conf = 0.0
             publish_hands = 0
@@ -490,6 +566,7 @@ def status():
         "debug_locked": DEBUG_LOCKED,
         "last_error": last_error,
         "active_gestures": sorted(ACTIVE_GESTURES),
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
     }
     if DEBUG_MODE or VERBOSE:
         payload["logs"] = list(_LOG_HISTORY)
@@ -498,23 +575,36 @@ def status():
 
 @app.route("/gestures", methods=["GET", "POST"])
 def gestures_config():
-    global ACTIVE_GESTURES
+    global ACTIVE_GESTURES, CONFIDENCE_THRESHOLD
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         active = data.get("active", [])
         if not isinstance(active, list):
             log.warning("Invalid gestures payload: %s", data)
             return jsonify({"ok": False, "error": "Invalid payload"}), 400
-        filtered = [g for g in active if g in AVAILABLE_GESTURES]
+        filtered = [g for g in active if g in AVAILABLE_GESTURES_SET]
         if not filtered:
             log.warning("Attempt to set empty or invalid gestures: %s", active)
             return jsonify({"ok": False, "error": "No valid gestures"}), 400
+        threshold = data.get("confidence_threshold", CONFIDENCE_THRESHOLD)
+        try:
+            threshold = float(threshold)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Confidence threshold non valido"}), 400
+        threshold = _clamp(threshold, 0.0, 1.0)
         ACTIVE_GESTURES = set(filtered)
+        CONFIDENCE_THRESHOLD = threshold
         log.info("Active gestures updated: %s", sorted(ACTIVE_GESTURES))
-        return jsonify({"ok": True, "active": sorted(ACTIVE_GESTURES)})
+        log.info("Confidence threshold set to %.2f", CONFIDENCE_THRESHOLD)
+        return jsonify({
+            "ok": True,
+            "active": sorted(ACTIVE_GESTURES),
+            "confidence_threshold": CONFIDENCE_THRESHOLD,
+        })
     return jsonify({
-        "available": sorted(AVAILABLE_GESTURES),
+        "available": AVAILABLE_GESTURES,
         "active": sorted(ACTIVE_GESTURES),
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
     })
 
 

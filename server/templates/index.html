@@ -54,15 +54,27 @@
       </div>
     </section>
 
-    <section class="drawer-section">
+    <section class="drawer-section" id="gesture-section">
       <header>
-        <h2>Gesture MQTT</h2>
-        <p>Seleziona le gesture da inviare tramite MQTT.</p>
+        <div class="section-heading">
+          <h2>Gesture MQTT</h2>
+          <button id="gesture-collapse" type="button" class="collapse-btn" aria-expanded="true" aria-controls="gesture-content">Nascondi</button>
+        </div>
+        <p>Seleziona le gesture da inviare tramite MQTT e imposta la soglia minima di confidence.</p>
       </header>
-      <div id="gesture-list" class="gesture-list"></div>
-      <div class="gesture-actions">
-        <button id="gesture-save" type="button">Salva selezione</button>
-        <span class="gesture-status" id="gesture-status"></span>
+      <div id="gesture-content" class="gesture-content">
+        <div class="gesture-controls">
+          <label for="confidence-threshold">Confidence minima</label>
+          <div class="slider-row">
+            <input id="confidence-threshold" type="range" min="0" max="100" step="1" value="70" />
+            <span class="slider-value" id="confidence-threshold-value">70%</span>
+          </div>
+        </div>
+        <div id="gesture-list" class="gesture-list"></div>
+        <div class="gesture-actions">
+          <button id="gesture-save" type="button">Salva selezione</button>
+          <span class="gesture-status" id="gesture-status"></span>
+        </div>
       </div>
     </section>
   </aside>
@@ -71,8 +83,65 @@
     const gestureState = {
       available: [],
       active: new Set(),
+      threshold: 0.7,
       dirty: false,
     };
+
+    const gestureSection = document.getElementById('gesture-section');
+    const gestureCollapseBtn = document.getElementById('gesture-collapse');
+    const confidenceSlider = document.getElementById('confidence-threshold');
+    const confidenceValueEl = document.getElementById('confidence-threshold-value');
+
+    function clamp01(value) {
+      if (typeof value !== 'number' || Number.isNaN(value)) return 0;
+      return Math.min(1, Math.max(0, value));
+    }
+
+    function setThresholdDisplay(value, syncSlider = true) {
+      const pct = Math.round(clamp01(value) * 100);
+      if (syncSlider && confidenceSlider) {
+        confidenceSlider.value = String(pct);
+      }
+      if (confidenceValueEl) {
+        confidenceValueEl.textContent = pct + '%';
+      }
+    }
+
+    function updateGestureSaveState() {
+      const btn = document.getElementById('gesture-save');
+      if (!btn) return;
+      btn.disabled = !gestureState.dirty;
+    }
+
+    function markGesturesDirty() {
+      gestureState.dirty = true;
+      updateGestureSaveState();
+    }
+
+    function setGestureSectionCollapsed(collapsed) {
+      if (!gestureSection || !gestureCollapseBtn) return;
+      gestureSection.classList.toggle('collapsed', collapsed);
+      gestureCollapseBtn.setAttribute('aria-expanded', String(!collapsed));
+      gestureCollapseBtn.textContent = collapsed ? 'Mostra' : 'Nascondi';
+    }
+
+    if (gestureCollapseBtn && gestureSection) {
+      gestureCollapseBtn.addEventListener('click', () => {
+        const collapsed = !gestureSection.classList.contains('collapsed');
+        setGestureSectionCollapsed(collapsed);
+      });
+      setGestureSectionCollapsed(false);
+    }
+
+    if (confidenceSlider) {
+      confidenceSlider.addEventListener('input', () => {
+        const pct = parseInt(confidenceSlider.value, 10);
+        if (Number.isNaN(pct)) return;
+        gestureState.threshold = clamp01(pct / 100);
+        setThresholdDisplay(gestureState.threshold, false);
+        markGesturesDirty();
+      });
+    }
 
     const debugState = {
       enabled: false,
@@ -112,9 +181,19 @@
 
     function renderGestures() {
       const container = document.getElementById('gesture-list');
+      if (!container) return;
+      setThresholdDisplay(gestureState.threshold);
       container.innerHTML = '';
+      if (!gestureState.available.length) {
+        const empty = document.createElement('div');
+        empty.className = 'gesture-empty';
+        empty.textContent = 'Nessuna gesture disponibile';
+        container.appendChild(empty);
+        updateGestureSaveState();
+        return;
+      }
       gestureState.available.forEach((name) => {
-        const id = `gesture-${name}`;
+        const id = `gesture-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
         const wrapper = document.createElement('label');
         wrapper.className = 'gesture-item';
         const input = document.createElement('input');
@@ -128,7 +207,7 @@
           } else {
             gestureState.active.delete(name);
           }
-          gestureState.dirty = true;
+          markGesturesDirty();
         });
         const span = document.createElement('span');
         span.textContent = name;
@@ -136,6 +215,7 @@
         wrapper.appendChild(span);
         container.appendChild(wrapper);
       });
+      updateGestureSaveState();
     }
 
     async function loadGestures() {
@@ -145,6 +225,9 @@
         const data = await res.json();
         gestureState.available = data.available || [];
         gestureState.active = new Set(data.active || []);
+        if (typeof data.confidence_threshold === 'number') {
+          gestureState.threshold = clamp01(data.confidence_threshold);
+        }
         gestureState.dirty = false;
         renderGestures();
       } catch (err) {
@@ -157,13 +240,19 @@
         const res = await fetch('/gestures', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ active: Array.from(gestureState.active) }),
+          body: JSON.stringify({
+            active: Array.from(gestureState.active),
+            confidence_threshold: gestureState.threshold,
+          }),
         });
         const data = await res.json();
         if (!res.ok || data.ok === false) {
           throw new Error(data.error || 'Salvataggio fallito');
         }
         gestureState.active = new Set(data.active || []);
+        if (typeof data.confidence_threshold === 'number') {
+          gestureState.threshold = clamp01(data.confidence_threshold);
+        }
         gestureState.dirty = false;
         renderGestures();
         document.getElementById('gesture-status').textContent = 'Salvato ✔';
@@ -174,6 +263,7 @@
     }
 
     document.getElementById('gesture-save').addEventListener('click', saveGestures);
+    updateGestureSaveState();
 
     function updateDebugButton() {
       const btn = document.getElementById('debug-toggle');
@@ -234,6 +324,11 @@
         if (!gestureState.dirty && (j.active_gestures || []).length && gestureState.available.length) {
           gestureState.active = new Set(j.active_gestures);
           renderGestures();
+        }
+        if (!gestureState.dirty && typeof j.confidence_threshold === 'number') {
+          gestureState.threshold = clamp01(j.confidence_threshold);
+          setThresholdDisplay(gestureState.threshold);
+          updateGestureSaveState();
         }
       }catch(e){
         console.error('Refresh error', e);
