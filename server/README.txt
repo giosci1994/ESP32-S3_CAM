@@ -26,7 +26,8 @@ MQTT (default):
 
 Avvio rapido:
   docker build -t http-gesture-mqtt:latest .
-  SOURCE_URL="http://192.168.1.24/stream" VERBOSE=1 ./RUN.sh
+  cp .env.example .env  # personalizza e poi rimuovi dal VCS
+  ./RUN.sh
   # oppure:
   docker compose up -d
 

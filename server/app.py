@@ -1,4 +1,5 @@
 import os, time, re, cv2, numpy as np, requests, logging, json, threading
+from pathlib import Path
 from flask import Flask, Response, render_template, jsonify
 from collections import deque
 
@@ -13,11 +14,53 @@ except Exception as e:
     mp_ok = False
 
 # --- Env / settings ---
-SOURCE_URL = os.getenv("SOURCE_URL", "http://192.168.1.24/stream")
+
+def _load_env_from_file():
+    """Populate os.environ with values from a .env file if present.
+
+    The lookup order is: current working directory, repository root, server
+    directory. Only missing variables are set so that explicit environment
+    values (e.g. docker, shell) win.
+    """
+
+    env_name = os.getenv("ENV_FILE", ".env")
+    candidate_dirs = [
+        Path(__file__).resolve().parent.parent,
+        Path(__file__).resolve().parent,
+        Path.cwd(),
+    ]
+    seen = set()
+    for base in candidate_dirs:
+        env_path = (base / env_name).resolve()
+        if env_path in seen or not env_path.exists() or not env_path.is_file():
+            continue
+        seen.add(env_path)
+        try:
+            for raw_line in env_path.read_text().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export ") :].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"[env] Failed loading {env_path}: {exc}")
+
+
+_load_env_from_file()
+
+SOURCE_URL = os.getenv("SOURCE_URL", "http://esp32-s3.local/stream")
 TARGET_FPS = float(os.getenv("TARGET_FPS", "25"))
 FRAME_DELAY = 1.0 / TARGET_FPS
 TARGET_SIZE = (800, 600)
-VERBOSE = os.getenv("VERBOSE", "0") == "1"
+VERBOSE = os.getenv("VERBOSE", "0").lower() in {"1", "true", "yes", "on"}
 CUSTOM_GESTURE_MAP = json.loads(os.getenv("CUSTOM_GESTURE_MAP", "{}"))
 
 # Pinch tuning
@@ -25,10 +68,10 @@ PINCH_DEADZONE_PX = int(os.getenv("PINCH_DEADZONE_PX", "8"))
 PINCH_HISTORY = int(os.getenv("PINCH_HISTORY", "8"))
 
 # MQTT
-MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.100")
+MQTT_HOST = os.getenv("MQTT_HOST", "mqtt.local")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "password")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "gesture32")
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gesture32-server")
