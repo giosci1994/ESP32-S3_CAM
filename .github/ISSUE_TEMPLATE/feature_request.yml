@@ -1,0 +1,26 @@
+name: Feature request
+description: Proponi una nuova funzionalità o miglioramento
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Problema da risolvere / Motivazione
+      description: Che problema risolve? Perché serve?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Soluzione proposta
+      description: Descrivi come dovrebbe funzionare, API/UI, MQTT, ecc.
+  - type: textarea
+    attributes:
+      label: Alternative considerate
+  - type: textarea
+    attributes:
+      label: Extra (mockup, screenshot, esempi di automazione HA, ecc.)
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: Sono disponibile a contribuire alla PR
+        - label: Ho verificato che non esista già

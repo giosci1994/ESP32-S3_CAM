@@ -1,0 +1,37 @@
+name: Bug report
+description: Segnala un problema o un comportamento inatteso
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Descrizione del bug
+      description: Spiega cosa succede e cosa ti aspettavi
+      placeholder: Descrizione chiara e concisa...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Passi per riprodurre
+      value: |
+        1. Avvio container con ...
+        2. Apro ...
+        3. Osservo ...
+  - type: textarea
+    attributes:
+      label: Log/Output rilevanti
+      description: Incolla qui i log del container o screenshot
+      render: bash
+  - type: input
+    attributes:
+      label: Versione/commit
+      description: Tag immagine o commit SHA
+  - type: input
+    attributes:
+      label: Piattaforma
+      description: OS/architettura (es. Ubuntu 22.04 amd64, RPi4 arm64)
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: Ho cercato issue simili
+        - label: Ho rimosso dati sensibili dai log
