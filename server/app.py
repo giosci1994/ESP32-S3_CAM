@@ -78,55 +78,22 @@ CONFIDENCE_THRESHOLD = _clamp(_conf_threshold_env, 0.0, 1.0)
 # Gesture catalog
 GESTURE_CHOICES = [
     "Mano aperta",
-    "Pugno",
-    "Pollice in su",
-    "Pollice in giù",
-    "OK",
     "V di vittoria",
-    "Uno (indice su)",
-    "Punta (indice)",
-    "Punta a sinistra",
-    "Punta a destra",
-    "Pinch",
-    "Pinch + trascina in verticale",
-    "Pinch + trascina in orizzontale",
-    "Scorrimento a sinistra",
-    "Scorrimento a destra",
-    "Scorrimento verso l’alto",
-    "Scorrimento verso il basso",
-    "Cerchio orario",
-    "Cerchio antiorario",
-    "Spinta in avanti",
-    "Tiro indietro",
-    "Mano aperta mantenuta",
-    "Due mani che si allontanano",
-    "Due mani che si avvicinano",
-    "Rotazione a due mani",
-    "Selezione angolo + pinch di conferma",
-    "Gesto dal bordo sinistro",
-    "Gesto dal bordo destro",
-    "Gesto dal bordo superiore",
-    "Selezione su griglia 3×3",
-    "Rock (corna)",
-    "V mantenuta",
+    "OK",
+    "Angolo in alto a sinistra",
+    "Angolo in alto a destra",
+    "Angolo in basso a sinistra",
+    "Angolo in basso a destra",
 ]
 
 DEFAULT_GESTURE_MAP = {
     "open_palm": "Mano aperta",
-    "fist": "Pugno",
+    "victory": "V di vittoria",
     "ok": "OK",
-    "peace": "V di vittoria",
-    "rock": "Rock (corna)",
-    "one": "Uno (indice su)",
-    "point": "Punta (indice)",
-    "point_left": "Punta a sinistra",
-    "point_right": "Punta a destra",
-    "pinch": "Pinch",
-    "0_fingers": "Pugno",
-    "1_fingers": "Uno (indice su)",
-    "3_fingers": "Mano aperta mantenuta",
-    "4_fingers": "Mano aperta",
-    "2_fingers": "V mantenuta",
+    "point_top_left": "Angolo in alto a sinistra",
+    "point_top_right": "Angolo in alto a destra",
+    "point_bottom_left": "Angolo in basso a sinistra",
+    "point_bottom_right": "Angolo in basso a destra",
 }
 
 try:
@@ -417,7 +384,6 @@ def _classify_gesture(landmarks, handedness_label):
     WRIST=0; THUMB_TIP=4; THUMB_IP=3; INDEX_TIP=8; INDEX_PIP=6; MIDDLE_TIP=12; MIDDLE_PIP=10; RING_TIP=16; RING_PIP=14; PINKY_TIP=20; PINKY_PIP=18; INDEX_MCP=5
 
     def dist(a, b): return float(np.linalg.norm(pts[a]-pts[b]))
-    def horiz_dir(a, b): return pts[b,0] - pts[a,0]
 
     fingers = {
         "thumb": (pts[THUMB_TIP,0] < pts[THUMB_IP,0]-0.02) if handedness_label=="Right"
@@ -430,24 +396,48 @@ def _classify_gesture(landmarks, handedness_label):
     up_count = sum(1 for v in fingers.values() if v)
     d_thumb_index = dist(THUMB_TIP, INDEX_TIP)
 
-    if up_count == 5: return "open_palm", 0.95
-    if up_count == 0: return "fist", 0.95
+    # Mano aperta: tutte le dita sollevate e ben distanziate
+    if all(fingers.values()):
+        span = dist(INDEX_TIP, PINKY_TIP)
+        conf = 0.92 + min(0.06, span) * 0.5
+        return "open_palm", min(conf, 0.99)
+
+    # V di vittoria: indice e medio sollevati e separati, altre dita chiuse
     if fingers["index"] and fingers["middle"] and not fingers["ring"] and not fingers["pinky"]:
-        return "peace", 0.9
-    if fingers["index"] and not fingers["middle"] and not fingers["ring"] and fingers["pinky"]:
-        return "rock", 0.85
-    if d_thumb_index < 0.06:
-        return "ok", 0.85
-    if fingers["index"] and not any([fingers["middle"], fingers["ring"], fingers["pinky"]]):
-        dx = horiz_dir(WRIST, INDEX_MCP)
-        if dx < -0.015: return "point_left", 0.8
-        if dx >  0.015: return "point_right", 0.8
-        return "point", 0.75
-    if d_thumb_index < 0.04 and not fingers["index"]:
-        return "pinch", 0.8
-    if fingers["index"] and up_count == 1:
-        return "one", 0.8
-    return f"{up_count}_fingers", 0.6
+        separation = dist(INDEX_TIP, MIDDLE_TIP)
+        if separation > 0.045:
+            conf = 0.88 + min(0.07, separation - 0.045) * 1.5
+            return "victory", min(conf, 0.99)
+
+    # OK: pollice e indice a contatto, indice piegato, altre dita prevalentemente sollevate
+    index_bent = pts[INDEX_TIP,1] > pts[INDEX_PIP,1] - 0.005
+    support_fingers = sum(1 for name in ("middle", "ring", "pinky") if fingers[name])
+    if d_thumb_index < 0.05 and index_bent and support_fingers >= 2:
+        conf = 0.86 + (0.05 - d_thumb_index) * 2.2
+        return "ok", min(conf, 0.99)
+
+    # Indicazione angoli: solo indice sollevato, direzione diagonale ben definita
+    if fingers["index"] and not any(fingers[name] for name in ("middle", "ring", "pinky")):
+        idx_vec = pts[INDEX_TIP] - pts[INDEX_MCP]
+        dx, dy = float(idx_vec[0]), float(idx_vec[1])
+        mag = (dx * dx + dy * dy) ** 0.5
+        dir_thr = 0.04
+        if mag > 0.1:
+            horiz = None
+            vert = None
+            if dx <= -dir_thr:
+                horiz = "left"
+            elif dx >= dir_thr:
+                horiz = "right"
+            if dy <= -dir_thr:
+                vert = "top"
+            elif dy >= dir_thr:
+                vert = "bottom"
+            if horiz and vert:
+                conf = 0.82 + min(0.08, mag - 0.1) * 1.2
+                return f"point_{vert}_{horiz}", min(conf, 0.96)
+
+    return "unknown", 0.3
 
 # --- Pinch calculation ---
 _pinch_hist = deque(maxlen=PINCH_HISTORY)
