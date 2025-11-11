@@ -57,7 +57,7 @@ Gesture Server (Docker: Flask + OpenCV + MediaPipe Hands)
 ```bash
 cd server
 cp .env.example .env
-# modifica i placeholder nel file .env
+# modifica i placeholder nel file .env (non committare `.env`)
 docker compose up -d
 # UI: http://<host>:12345/
 ```
