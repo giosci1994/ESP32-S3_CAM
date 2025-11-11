@@ -106,6 +106,12 @@ Sensori via discovery:
 - `sensor.esp32_pinch_distance_norm` — distanza normalizzata (0..1)
 - `sensor.esp32_pinch_state` — `opening` / `closing` / `steady`
 
+## Sensori MQTT
+
+<p align="center">
+  <img src="docs/sensori_mqtt.jpg" alt="Sensori MQTT in Home Assistant" width="720">
+</p>
+
 Esempio automazione:
 ```yaml
 alias: Zoom con pinch
