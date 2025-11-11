@@ -109,7 +109,7 @@ Sensori via discovery:
 ## Sensori MQTT
 
 <p align="center">
-  <img src="docs/sensori_mqtt.jpg" alt="Sensori MQTT in Home Assistant" width="720">
+  <img src="docs/images/sensori_mqtt.jpg" alt="Sensori MQTT in Home Assistant" width="720">
 </p>
 
 Esempio automazione:
