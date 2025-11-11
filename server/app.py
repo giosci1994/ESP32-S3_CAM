@@ -130,6 +130,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("gesture-server")
 
+_STATE_PATH = Path(__file__).resolve().parent / "state.json"
+_STATE_LOCK = threading.Lock()
+
 _LOG_HISTORY = deque(maxlen=int(os.getenv("LOG_HISTORY_SIZE", "200")))
 
 _FRAME_SIZE_CHOICES = {
@@ -165,6 +168,136 @@ def _advanced_defaults():
 ADVANCED_SETTINGS = _advanced_defaults()
 
 
+def _persist_state():
+    payload = {
+        "active_gestures": sorted(ACTIVE_GESTURES),
+        "advanced_settings": ADVANCED_SETTINGS,
+    }
+    tmp_path = _STATE_PATH.with_suffix(".tmp")
+    try:
+        with _STATE_LOCK:
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+            tmp_path.replace(_STATE_PATH)
+    except Exception as exc:  # pragma: no cover - I/O failure should not crash
+        log.warning("Failed to persist state: %s", exc)
+
+
+def _coerce_advanced_updates(data, *, strict=False):
+    updates = {}
+    errors = {}
+
+    float_fields = {
+        "confidence_min": (0.5, 0.95),
+        "pinch_threshold_norm": (0.03, 0.08),
+        "pinch_corner_hold_s": (0.5, 3.0),
+        "brightness_contrast": (-50.0, 50.0),
+    }
+    int_fields = {
+        "movement_sensitivity_px": (4, 30),
+        "temporal_smoothing": (1, 10),
+        "hold_delay_ms": (200, 1500),
+        "pinch_stability_px": (4, 20),
+        "pinch_confirm_ms": (300, 2000),
+        "corner_area_pct": (10, 50),
+        "processing_fps": (10, 30),
+        "mqtt_publish_interval": (200, 1000),
+        "float_precision": (1, 4),
+    }
+
+    for name, bounds in float_fields.items():
+        if name not in data:
+            continue
+        low, high = bounds
+        raw = data.get(name)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            if strict:
+                errors[name] = "Valore non valido"
+            continue
+        updates[name] = _clamp(value, low, high)
+
+    for name, bounds in int_fields.items():
+        if name not in data:
+            continue
+        low, high = bounds
+        raw = data.get(name)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            if strict:
+                errors[name] = "Valore non valido"
+            continue
+        updates[name] = max(low, min(high, value))
+
+    frame_size = data.get("frame_size")
+    if frame_size is not None:
+        if frame_size in _FRAME_SIZE_CHOICES:
+            updates["frame_size"] = frame_size
+        elif strict:
+            errors["frame_size"] = "Valore non supportato"
+
+    for name in ("auto_exposure", "show_landmarks", "visual_feedback"):
+        if name in data:
+            updates[name] = bool(data.get(name))
+
+    if "mqtt_base_topic" in data:
+        topic = data.get("mqtt_base_topic")
+        if isinstance(topic, str):
+            topic = topic.strip()
+            if topic:
+                updates["mqtt_base_topic"] = topic
+            elif strict:
+                errors["mqtt_base_topic"] = "Valore obbligatorio"
+        elif strict:
+            errors["mqtt_base_topic"] = "Valore non valido"
+
+    return updates, errors
+
+
+def _set_advanced_settings(updates, *, persist=True):
+    global ADVANCED_SETTINGS, CONFIDENCE_THRESHOLD, TARGET_FPS, FRAME_DELAY, TARGET_SIZE, MQTT_BASE
+    if not updates:
+        if persist:
+            _persist_state()
+        return False
+
+    previous = dict(ADVANCED_SETTINGS)
+    ADVANCED_SETTINGS.update(updates)
+    CONFIDENCE_THRESHOLD = ADVANCED_SETTINGS["confidence_min"]
+    TARGET_FPS = float(ADVANCED_SETTINGS["processing_fps"])
+    FRAME_DELAY = 1.0 / max(TARGET_FPS, 1.0)
+    TARGET_SIZE = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS["frame_size"], TARGET_SIZE)
+    new_base = ADVANCED_SETTINGS.get("mqtt_base_topic") or MQTT_BASE
+    base_changed = new_base != MQTT_BASE
+    MQTT_BASE = new_base
+    if base_changed and mqtt_client is not None:
+        mqtt_publish_discovery()
+    if persist:
+        _persist_state()
+    return previous != ADVANCED_SETTINGS
+
+
+def _load_persisted_state():
+    if not _STATE_PATH.exists() or not _STATE_PATH.is_file():
+        return
+    try:
+        data = json.loads(_STATE_PATH.read_text())
+    except Exception as exc:  # pragma: no cover - ignore corrupt files
+        log.warning("Unable to read state file %s: %s", _STATE_PATH, exc)
+        return
+
+    gestures = data.get("active_gestures")
+    if isinstance(gestures, (list, tuple)):
+        filtered = [g for g in gestures if g in AVAILABLE_GESTURES_SET]
+        if filtered:
+            ACTIVE_GESTURES.clear()
+            ACTIVE_GESTURES.update(filtered)
+
+    adv = data.get("advanced_settings")
+    if isinstance(adv, dict):
+        updates, _ = _coerce_advanced_updates(adv, strict=False)
+        _set_advanced_settings(updates, persist=False)
 class _MemoryLogHandler(logging.Handler):
     def emit(self, record):
         try:
@@ -188,9 +321,23 @@ def _apply_logging_level():
 _apply_logging_level()
 
 app = Flask(__name__)
-last_gesture = {"label":"unknown","confidence":0.0,"num_hands":0}
-last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":None,"delta_px":0.0,"mode_enabled":False,"mode_since":0.0}
-pinch_mode_state = {"enabled": False, "since": 0.0, "feedback_until": 0.0, "feedback_text": ""}
+last_gesture = {"label": "unknown", "confidence": 0.0, "num_hands": 0}
+last_pinch = {
+    "distance_px": 0.0,
+    "distance_norm": 0.0,
+    "trend": None,
+    "delta_px": 0.0,
+    "mode": None,
+    "mode_enabled": False,
+    "mode_since": 0.0,
+}
+pinch_mode_state = {
+    "active": None,
+    "since": 0.0,
+    "steady_since": None,
+    "feedback_until": 0.0,
+    "feedback_text": "",
+}
 _corner_hold_tracker = {
     "point_top_left": {"start": None},
     "point_top_right": {"start": None},
@@ -236,10 +383,122 @@ else:
 if not ACTIVE_GESTURES:
     ACTIVE_GESTURES = set(AVAILABLE_GESTURES)
 
+_load_persisted_state()
+
 # ------------- MQTT: Home Assistant Discovery -------------
 mqtt_client = None
 mqtt_connected = False
 mqtt_last_error = ""
+
+
+def mqtt_publish_discovery():
+    if mqtt_client is None:
+        return
+
+    try:
+        device = {
+            "identifiers": [MQTT_BASE],
+            "name": "ESP32 Gesture Server",
+            "manufacturer": "Giosci Lab",
+            "model": "ESP32+MediaPipe",
+        }
+        sensors = [
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_gesture",
+                "name": "ESP32 Gesture",
+                "state_topic": f"{MQTT_BASE}/state/gesture",
+                "icon": "mdi:hand-back-right",
+            },
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_confidence",
+                "name": "ESP32 Gesture Confidence",
+                "state_topic": f"{MQTT_BASE}/state/confidence",
+                "unit_of_measurement": "%",
+                "state_class": "measurement",
+                "suggested_display_precision": 2,
+            },
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_hands",
+                "name": "ESP32 Hands Count",
+                "state_topic": f"{MQTT_BASE}/state/hands",
+                "state_class": "measurement",
+            },
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_pinch_distance_px",
+                "name": "ESP32 Pinch Distance (px)",
+                "state_topic": f"{MQTT_BASE}/state/pinch_distance_px",
+                "unit_of_measurement": "px",
+                "state_class": "measurement",
+                "suggested_display_precision": 1,
+            },
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_pinch_distance_norm",
+                "name": "ESP32 Pinch Distance (norm)",
+                "state_topic": f"{MQTT_BASE}/state/pinch_distance_norm",
+                "state_class": "measurement",
+                "suggested_display_precision": 4,
+            },
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_pinch_state",
+                "name": "ESP32 Pinch State",
+                "state_topic": f"{MQTT_BASE}/state/pinch_state",
+                "icon": "mdi:gesture",
+            },
+            {
+                "component": "sensor",
+                "uniq": f"{MQTT_BASE}_pinch_mode",
+                "name": "ESP32 Pinch Mode",
+                "state_topic": f"{MQTT_BASE}/state/pinch_mode",
+                "icon": "mdi:gesture-tap-hold",
+            },
+            {
+                "component": "binary_sensor",
+                "uniq": f"{MQTT_BASE}_pinch_mode_left",
+                "name": "ESP32 Pinch Mode Left",
+                "state_topic": f"{MQTT_BASE}/state/pinch_mode_left",
+                "device_class": "occupancy",
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "icon": "mdi:hand-back-left",
+            },
+            {
+                "component": "binary_sensor",
+                "uniq": f"{MQTT_BASE}_pinch_mode_right",
+                "name": "ESP32 Pinch Mode Right",
+                "state_topic": f"{MQTT_BASE}/state/pinch_mode_right",
+                "device_class": "occupancy",
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "icon": "mdi:hand-back-right",
+            },
+        ]
+
+        mqtt_client.publish(f"{MQTT_BASE}/availability", "online", retain=True)
+
+        for sensor in sensors:
+            sensor_copy = dict(sensor)
+            component = sensor_copy.pop("component")
+            payload = {
+                "name": sensor_copy.pop("name"),
+                "state_topic": sensor_copy.pop("state_topic"),
+                "unique_id": sensor_copy.pop("uniq"),
+                "availability_topic": f"{MQTT_BASE}/availability",
+                "device": device,
+            }
+            payload.update(sensor_copy)
+            topic = f"{DISCOVERY_PREFIX}/{component}/{payload['unique_id']}/config"
+            mqtt_client.publish(topic, json.dumps(payload), retain=True)
+            log.info("[MQTT] Discovery published: %s", topic)
+    except Exception as exc:
+        log.warning("[MQTT] Discovery failed: %s", exc)
+
+
 def mqtt_connect_and_discover():
     global mqtt_client, mqtt_connected, mqtt_last_error
     try:
@@ -253,78 +512,7 @@ def mqtt_connect_and_discover():
         log.info(f"[MQTT] Connected (rc={rc})")
         mqtt_connected = True
         mqtt_last_error = ""
-        client.publish(f"{MQTT_BASE}/availability", "online", retain=True)
-        device = {
-            "identifiers": [MQTT_BASE],
-            "name": "ESP32 Gesture Server",
-            "manufacturer": "Giosci Lab",
-            "model": "ESP32+MediaPipe",
-        }
-        sensors = [
-            {
-                "uniq": f"{MQTT_BASE}_gesture",
-                "name": "ESP32 Gesture",
-                "state_topic": f"{MQTT_BASE}/state/gesture",
-                "icon": "mdi:hand-back-right",
-            },
-            {
-                "uniq": f"{MQTT_BASE}_confidence",
-                "name": "ESP32 Gesture Confidence",
-                "state_topic": f"{MQTT_BASE}/state/confidence",
-                "unit_of_measurement": "%",
-                "state_class": "measurement",
-                "suggested_display_precision": 2
-            },
-            {
-                "uniq": f"{MQTT_BASE}_hands",
-                "name": "ESP32 Hands Count",
-                "state_topic": f"{MQTT_BASE}/state/hands",
-                "state_class": "measurement"
-            },
-            # Pinch sensors
-            {
-                "uniq": f"{MQTT_BASE}_pinch_distance_px",
-                "name": "ESP32 Pinch Distance (px)",
-                "state_topic": f"{MQTT_BASE}/state/pinch_distance_px",
-                "unit_of_measurement": "px",
-                "state_class": "measurement",
-                "suggested_display_precision": 1
-            },
-            {
-                "uniq": f"{MQTT_BASE}_pinch_distance_norm",
-                "name": "ESP32 Pinch Distance (norm)",
-                "state_topic": f"{MQTT_BASE}/state/pinch_distance_norm",
-                "state_class": "measurement",
-                "suggested_display_precision": 4
-            },
-            {
-                "uniq": f"{MQTT_BASE}_pinch_state",
-                "name": "ESP32 Pinch State",
-                "state_topic": f"{MQTT_BASE}/state/pinch_state",
-                "icon": "mdi:gesture",
-            },
-            {
-                "uniq": f"{MQTT_BASE}_pinch_mode",
-                "name": "ESP32 Pinch Mode",
-                "state_topic": f"{MQTT_BASE}/state/pinch_mode",
-                "icon": "mdi:gesture-tap-hold",
-            },
-        ]
-        for s in sensors:
-            obj = {
-                "name": s["name"],
-                "state_topic": s["state_topic"],
-                "unique_id": s["uniq"],
-                "availability_topic": f"{MQTT_BASE}/availability",
-                "device": device,
-            }
-            if "unit_of_measurement" in s: obj["unit_of_measurement"] = s["unit_of_measurement"]
-            if "state_class" in s: obj["state_class"] = s["state_class"]
-            if "icon" in s: obj["icon"] = s["icon"]
-            if "suggested_display_precision" in s: obj["suggested_display_precision"] = s["suggested_display_precision"]
-            disc_topic = f"{DISCOVERY_PREFIX}/sensor/{s['uniq']}/config"
-            client.publish(disc_topic, json.dumps(obj), retain=True)
-            log.info(f"[MQTT] Discovery published: {disc_topic}")
+        mqtt_publish_discovery()
 
     def on_disconnect(client, userdata, rc):
         global mqtt_connected, mqtt_last_error
@@ -391,9 +579,22 @@ def mqtt_publish_state():
             qos=0,
             retain=False,
         )
+        active_mode = pinch_mode_state.get("active")
         mqtt_client.publish(
             f"{MQTT_BASE}/state/pinch_mode",
-            "on" if pinch_mode_state.get("enabled") else "off",
+            active_mode or "none",
+            qos=0,
+            retain=False,
+        )
+        mqtt_client.publish(
+            f"{MQTT_BASE}/state/pinch_mode_left",
+            "ON" if active_mode == "left" else "OFF",
+            qos=0,
+            retain=False,
+        )
+        mqtt_client.publish(
+            f"{MQTT_BASE}/state/pinch_mode_right",
+            "ON" if active_mode == "right" else "OFF",
             qos=0,
             retain=False,
         )
@@ -667,6 +868,33 @@ def _localize_pinch_trend(trend):
     return mapping.get(trend, trend)
 
 
+def _mode_label(mode):
+    return {"left": "sinistra", "right": "destra"}.get(mode, "")
+
+
+def _set_pinch_mode(mode, *, now=None, reason=None):
+    if now is None:
+        now = time.time()
+    current = pinch_mode_state.get("active")
+    if mode == current:
+        return False
+    pinch_mode_state["active"] = mode
+    pinch_mode_state["since"] = now
+    pinch_mode_state["steady_since"] = None
+    message = ""
+    if mode is None and current:
+        label = _mode_label(current)
+        if label:
+            message = reason or f"Modalità pinch {label} disattivata"
+    elif mode:
+        label = _mode_label(mode)
+        if label:
+            message = reason or f"Modalità pinch {label} attivata"
+    pinch_mode_state["feedback_text"] = message
+    pinch_mode_state["feedback_until"] = now + 2.5 if message else 0.0
+    return True
+
+
 def _update_pinch_mode(candidate, settings_snapshot):
     hold_seconds = float(settings_snapshot.get("pinch_corner_hold_s", 1.5) or 1.5)
     hold_seconds = max(0.2, min(5.0, hold_seconds))
@@ -689,15 +917,52 @@ def _update_pinch_mode(candidate, settings_snapshot):
     elapsed = now - tracker["start"]
     if elapsed < hold_seconds:
         return
-    desired = (label == "point_top_right")
-    if pinch_mode_state["enabled"] == desired:
-        tracker["start"] = now
+    target_mode = {"point_top_left": "left", "point_top_right": "right"}.get(label)
+    if not target_mode:
+        tracker["start"] = None
         return
-    pinch_mode_state["enabled"] = desired
-    pinch_mode_state["since"] = now
-    pinch_mode_state["feedback_until"] = now + 2.5
-    pinch_mode_state["feedback_text"] = "Modalità pinch attivata" if desired else "Modalità pinch disattivata"
+    _set_pinch_mode(target_mode, now=now)
     tracker["start"] = None
+
+
+def _handle_pinch_mode_decay(pinch_trend, num_hands, settings_snapshot):
+    active_mode = pinch_mode_state.get("active")
+    if not active_mode:
+        pinch_mode_state["steady_since"] = None
+        return
+    now = time.time()
+    if num_hands <= 0:
+        _set_pinch_mode(None, now=now)
+        pinch_mode_state["steady_since"] = None
+        return
+    release_seconds = float(settings_snapshot.get("pinch_confirm_ms", 1000)) / 1000.0
+    release_seconds = max(0.2, min(5.0, release_seconds))
+    if pinch_trend == "steady":
+        if pinch_mode_state["steady_since"] is None:
+            pinch_mode_state["steady_since"] = now
+        elif now - pinch_mode_state["steady_since"] >= release_seconds:
+            _set_pinch_mode(None, now=now)
+            pinch_mode_state["steady_since"] = None
+    else:
+        pinch_mode_state["steady_since"] = None
+
+
+def _put_text_utf8(img, text, org, font_face, font_scale, color, thickness, line_type):
+    safe_text = text.replace("à", "a")
+    cv2.putText(img, safe_text, org, font_face, font_scale, color, thickness, line_type)
+    if "à" not in text:
+        return
+    base_x, base_y = org
+    char_width, char_height = cv2.getTextSize("a", font_face, font_scale, thickness)[0]
+    for idx, ch in enumerate(text):
+        if ch != "à":
+            continue
+        prefix = text[:idx].replace("à", "a")
+        prefix_size = cv2.getTextSize(prefix, font_face, font_scale, thickness)[0]
+        accent_x = base_x + prefix_size[0] + int(char_width * 0.55)
+        accent_y = base_y - int(char_height * 0.7)
+        accent_end = (accent_x + int(char_width * 0.35), accent_y - int(char_height * 0.25))
+        cv2.line(img, (accent_x, accent_y), accent_end, color, max(1, thickness - 1))
 
 def _processing_loop():
     global last_gesture, last_pinch, last_error, last_frame_ts
@@ -738,6 +1003,7 @@ def _processing_loop():
                 frame_h, frame_w = frame.shape[:2]
 
                 pinch_updated = False
+                pinch_trend_value = None
                 corner_candidate = None
                 if ctx:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -777,17 +1043,20 @@ def _processing_loop():
                             pinch_px,
                             settings_snapshot.get("pinch_stability_px", PINCH_DEADZONE_PX),
                         )
+                        pinch_trend_value = pinch_trend
                         last_pinch = {
                             "distance_px": float(pinch_px),
                             "distance_norm": float(pinch_norm),
                             "trend": pinch_trend,
                             "delta_px": float(pinch_delta),
-                            "mode_enabled": pinch_mode_state["enabled"],
-                            "mode_since": pinch_mode_state["since"],
+                            "mode": pinch_mode_state.get("active"),
+                            "mode_enabled": bool(pinch_mode_state.get("active")),
+                            "mode_since": pinch_mode_state.get("since", 0.0),
                         }
                         pinch_updated = True
 
                 _update_pinch_mode(corner_candidate, settings_snapshot)
+                _handle_pinch_mode_decay(pinch_trend_value, nh, settings_snapshot)
 
                 if not pinch_updated:
                     _pinch_hist.clear()
@@ -796,18 +1065,31 @@ def _processing_loop():
                         "distance_norm": 0.0,
                         "trend": None,
                         "delta_px": 0.0,
-                        "mode_enabled": pinch_mode_state["enabled"],
-                        "mode_since": pinch_mode_state["since"],
+                        "mode": pinch_mode_state.get("active"),
+                        "mode_enabled": bool(pinch_mode_state.get("active")),
+                        "mode_since": pinch_mode_state.get("since", 0.0),
                     }
                 else:
-                    last_pinch["mode_enabled"] = pinch_mode_state["enabled"]
-                    last_pinch["mode_since"] = pinch_mode_state["since"]
+                    last_pinch["mode"] = pinch_mode_state.get("active")
+                    last_pinch["mode_enabled"] = bool(pinch_mode_state.get("active"))
+                    last_pinch["mode_since"] = pinch_mode_state.get("since", 0.0)
 
                 mapped_label = CUSTOM_GESTURE_MAP.get(label, label)
+                display_label = mapped_label
+                display_conf = float(conf)
+                display_hands = int(nh)
+                if (
+                    display_label not in {"unknown", "none", "inactive"}
+                    and ACTIVE_GESTURES
+                    and display_label not in ACTIVE_GESTURES
+                ):
+                    display_label = "Disattivato"
+                    display_conf = 0.0
+                    display_hands = 0
                 last_gesture = {
-                    "label": mapped_label,
-                    "confidence": float(conf),
-                    "num_hands": int(nh),
+                    "label": display_label,
+                    "confidence": display_conf,
+                    "num_hands": display_hands,
                 }
 
                 nowt = time.time()
@@ -825,14 +1107,17 @@ def _processing_loop():
                 display_prec = min(4, max(1, display_prec))
                 conf_txt = f"{last_gesture['confidence']:.{display_prec}f}"
                 txt1 = f"Gesto: {last_gesture['label']}  Aff.: {conf_txt}  Mani: {last_gesture['num_hands']}"
-                cv2.putText(frame, txt1, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+                _put_text_utf8(frame, txt1, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
                 pinch_px = last_pinch.get('distance_px', 0.0)
                 pinch_delta = last_pinch.get('delta_px', 0.0)
                 pinch_txt = f"{pinch_px:.{display_prec}f}"
                 pinch_state = _localize_pinch_trend(last_pinch.get('trend'))
-                pinch_mode_txt = 'ATTIVA' if pinch_mode_state.get('enabled') else 'DISATTIVATA'
-                txt2 = f"Pinch: {pinch_txt}px  {pinch_state} ({pinch_delta:+.0f}px)  Modalità: {pinch_mode_txt}"
-                cv2.putText(frame, txt2, (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (120, 220, 255), 2, cv2.LINE_AA)
+                mode_active = last_pinch.get('mode')
+                pinch_mode_fragment = ''
+                if mode_active:
+                    pinch_mode_fragment = f"  Modalità pinch {_mode_label(mode_active)}"
+                txt2 = f"Pinch: {pinch_txt}px  {pinch_state} ({pinch_delta:+.0f}px){pinch_mode_fragment}"
+                _put_text_utf8(frame, txt2, (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (120, 220, 255), 2, cv2.LINE_AA)
 
                 if settings_snapshot.get("visual_feedback", True):
                     color = (60, 220, 120) if last_gesture['confidence'] >= CONFIDENCE_THRESHOLD else (70, 70, 220)
@@ -944,6 +1229,7 @@ def gestures_config():
             return jsonify({"ok": False, "error": "No valid gestures"}), 400
         ACTIVE_GESTURES = set(filtered)
         log.info("Active gestures updated: %s", sorted(ACTIVE_GESTURES))
+        _persist_state()
         return jsonify({
             "ok": True,
             "active": sorted(ACTIVE_GESTURES),
@@ -1014,84 +1300,15 @@ def advanced_settings():
     data = request.get_json(silent=True) or {}
     if data.get("action") == "reset":
         ADVANCED_SETTINGS = _advanced_defaults()
-        CONFIDENCE_THRESHOLD = ADVANCED_SETTINGS["confidence_min"]
-        TARGET_FPS = float(ADVANCED_SETTINGS["processing_fps"])
-        FRAME_DELAY = 1.0 / max(TARGET_FPS, 1.0)
-        TARGET_SIZE = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS["frame_size"], TARGET_SIZE)
-        MQTT_BASE = ADVANCED_SETTINGS["mqtt_base_topic"] or MQTT_BASE
+        _set_advanced_settings(dict(ADVANCED_SETTINGS), persist=True)
         log.info("Advanced settings reset to defaults")
         return jsonify({"ok": True, "settings": ADVANCED_SETTINGS})
 
-    errors = {}
-    updated = {}
-
-    def _parse_float(name, low, high, default):
-        raw = data.get(name, default)
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            errors[name] = "Valore non valido"
-            return
-        updated[name] = _clamp(value, low, high)
-
-    def _parse_int(name, low, high, default):
-        raw = data.get(name, default)
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            errors[name] = "Valore non valido"
-            return
-        updated[name] = max(low, min(high, value))
-
-    _parse_float("confidence_min", 0.5, 0.95, ADVANCED_SETTINGS["confidence_min"])
-    _parse_int("movement_sensitivity_px", 4, 30, ADVANCED_SETTINGS["movement_sensitivity_px"])
-    _parse_int("temporal_smoothing", 1, 10, ADVANCED_SETTINGS["temporal_smoothing"])
-    _parse_int("hold_delay_ms", 200, 1500, ADVANCED_SETTINGS["hold_delay_ms"])
-    _parse_float("pinch_threshold_norm", 0.03, 0.08, ADVANCED_SETTINGS["pinch_threshold_norm"])
-    _parse_int("pinch_stability_px", 4, 20, ADVANCED_SETTINGS["pinch_stability_px"])
-    _parse_int("pinch_confirm_ms", 300, 2000, ADVANCED_SETTINGS["pinch_confirm_ms"])
-    _parse_int("corner_area_pct", 10, 50, ADVANCED_SETTINGS["corner_area_pct"])
-    _parse_float("pinch_corner_hold_s", 0.5, 3.0, ADVANCED_SETTINGS["pinch_corner_hold_s"])
-    _parse_int("processing_fps", 10, 30, ADVANCED_SETTINGS["processing_fps"])
-    _parse_int("mqtt_publish_interval", 200, 1000, ADVANCED_SETTINGS["mqtt_publish_interval"])
-    _parse_int("float_precision", 1, 4, ADVANCED_SETTINGS["float_precision"])
-
-    frame_size = data.get("frame_size", ADVANCED_SETTINGS["frame_size"])
-    if frame_size not in _FRAME_SIZE_CHOICES:
-        errors["frame_size"] = "Valore non supportato"
-    else:
-        updated["frame_size"] = frame_size
-
-    bc_raw = data.get("brightness_contrast", ADVANCED_SETTINGS["brightness_contrast"])
-    try:
-        bc_value = float(bc_raw)
-    except (TypeError, ValueError):
-        errors["brightness_contrast"] = "Valore non valido"
-    else:
-        updated["brightness_contrast"] = max(-50.0, min(50.0, bc_value))
-
-    for name in ("auto_exposure", "show_landmarks", "visual_feedback"):
-        updated[name] = bool(data.get(name, ADVANCED_SETTINGS[name]))
-
-    mqtt_base_topic = data.get("mqtt_base_topic", ADVANCED_SETTINGS["mqtt_base_topic"]) or ADVANCED_SETTINGS["mqtt_base_topic"]
-    if isinstance(mqtt_base_topic, str):
-        mqtt_base_topic = mqtt_base_topic.strip()
-    else:
-        errors["mqtt_base_topic"] = "Valore non valido"
-    if not errors.get("mqtt_base_topic"):
-        if mqtt_base_topic:
-            updated["mqtt_base_topic"] = mqtt_base_topic
-        else:
-            errors["mqtt_base_topic"] = "Valore obbligatorio"
-
+    updates, errors = _coerce_advanced_updates(data, strict=True)
     if errors:
         return jsonify({"ok": False, "errors": errors}), 400
 
-    ADVANCED_SETTINGS.update(updated)
-    CONFIDENCE_THRESHOLD = ADVANCED_SETTINGS["confidence_min"]
-    TARGET_FPS = float(ADVANCED_SETTINGS["processing_fps"])
-    FRAME_DELAY = 1.0 / max(TARGET_FPS, 1.0)
-    TARGET_SIZE = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS["frame_size"], TARGET_SIZE)
-    MQTT_BASE = ADVANCED_SETTINGS["mqtt_base_topic"]
-    log.info("Advanced settings updated: %s", json.dumps(ADVANCED_SETTINGS))
+    changed = _set_advanced_settings(updates, persist=True)
+    if changed:
+        log.info("Advanced settings updated: %s", json.dumps(ADVANCED_SETTINGS))
     return jsonify({"ok": True, "settings": ADVANCED_SETTINGS})

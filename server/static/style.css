@@ -28,7 +28,9 @@ body.drawer-open #settings-drawer{ transform:translateX(0); }
 .collapse-btn{ padding:4px 12px; border-radius:999px; border:none; background:rgba(255,255,255,0.08); color:#d0ddff;
     font-size:12px; font-weight:600; cursor:pointer; transition:background 0.2s ease, color 0.2s ease; }
 .collapse-btn:hover{ background:rgba(255,255,255,0.14); color:#ffffff; }
-.drawer-section.collapsed .gesture-content{ display:none; }
+.drawer-section .drawer-content{ display:block; }
+.drawer-section[data-collapsed="true"] .drawer-content{ display:none; }
+.drawer-section[data-collapsed="true"] header p{ margin-bottom:0; }
 .drawer-section header p{ margin:6px 0 14px; font-size:13px; color:#a4b2d6; }
 .gesture-content{ display:grid; gap:16px; }
 .slider-row{ display:flex; align-items:center; gap:12px; }
