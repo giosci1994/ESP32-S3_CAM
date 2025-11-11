@@ -1,5 +1,6 @@
 import os, time, re, cv2, numpy as np, requests, logging, json, threading
-from flask import Flask, Response, render_template, jsonify
+from pathlib import Path
+from flask import Flask, Response, render_template, jsonify, request
 from collections import deque
 
 # --- MediaPipe (hands only) ---
@@ -13,11 +14,54 @@ except Exception as e:
     mp_ok = False
 
 # --- Env / settings ---
-SOURCE_URL = os.getenv("SOURCE_URL", "http://192.168.1.24/stream")
+
+def _load_env_from_file():
+    """Populate os.environ with values from a .env file if present.
+
+    The lookup order is: current working directory, repository root, server
+    directory. Only missing variables are set so that explicit environment
+    values (e.g. docker, shell) win.
+    """
+
+    env_name = os.getenv("ENV_FILE", ".env")
+    candidate_dirs = [
+        Path(__file__).resolve().parent.parent,
+        Path(__file__).resolve().parent,
+        Path.cwd(),
+    ]
+    seen = set()
+    for base in candidate_dirs:
+        env_path = (base / env_name).resolve()
+        if env_path in seen or not env_path.exists() or not env_path.is_file():
+            continue
+        seen.add(env_path)
+        try:
+            for raw_line in env_path.read_text().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export ") :].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"[env] Failed loading {env_path}: {exc}")
+
+
+_load_env_from_file()
+
+SOURCE_URL = os.getenv("SOURCE_URL", "http://esp32-s3.local/stream")
 TARGET_FPS = float(os.getenv("TARGET_FPS", "25"))
 FRAME_DELAY = 1.0 / TARGET_FPS
 TARGET_SIZE = (800, 600)
-VERBOSE = os.getenv("VERBOSE", "0") == "1"
+VERBOSE = os.getenv("VERBOSE", "0").lower() in {"1", "true", "yes", "on"}
+DEBUG_MODE = os.getenv("DEBUG_MODE", "0").lower() in {"1", "true", "yes", "on"} or VERBOSE
 CUSTOM_GESTURE_MAP = json.loads(os.getenv("CUSTOM_GESTURE_MAP", "{}"))
 
 # Pinch tuning
@@ -25,26 +69,83 @@ PINCH_DEADZONE_PX = int(os.getenv("PINCH_DEADZONE_PX", "8"))
 PINCH_HISTORY = int(os.getenv("PINCH_HISTORY", "8"))
 
 # MQTT
-MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.100")
+MQTT_HOST = os.getenv("MQTT_HOST", "mqtt.local")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "password")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "gesture32")
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gesture32-server")
 
-logging.basicConfig(level=logging.DEBUG if VERBOSE else logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG if VERBOSE or DEBUG_MODE else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 log = logging.getLogger("gesture-server")
+
+_LOG_HISTORY = deque(maxlen=int(os.getenv("LOG_HISTORY_SIZE", "200")))
+
+
+class _MemoryLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            _LOG_HISTORY.append({
+                "ts": record.created,
+                "level": record.levelname,
+                "msg": msg,
+            })
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+
+logging.getLogger().addHandler(_MemoryLogHandler())
 
 app = Flask(__name__)
 last_gesture = {"label":"unknown","confidence":0.0,"num_hands":0}
 last_pinch   = {"distance_px":0.0,"distance_norm":0.0,"trend":"steady","delta_px":0.0}
 last_error = ""
+last_frame_ts = 0.0
+
+AVAILABLE_GESTURES = {
+    "unknown",
+    "none",
+    "open_palm",
+    "fist",
+    "peace",
+    "rock",
+    "ok",
+    "point_left",
+    "point_right",
+    "point",
+    "pinch",
+    "one",
+    "0_fingers",
+    "1_fingers",
+    "2_fingers",
+    "3_fingers",
+    "4_fingers",
+}
+AVAILABLE_GESTURES.update(CUSTOM_GESTURE_MAP.values())
+
+def _parse_active_gestures(raw: str):
+    if not raw:
+        return set()
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    return {item for item in items if item in AVAILABLE_GESTURES or item == "*"}
+
+
+_DEFAULT_ACTIVE = _parse_active_gestures(os.getenv("ACTIVE_GESTURES", ""))
+ACTIVE_GESTURES = set(AVAILABLE_GESTURES if "*" in _DEFAULT_ACTIVE else _DEFAULT_ACTIVE)
+if not ACTIVE_GESTURES:
+    ACTIVE_GESTURES = set(AVAILABLE_GESTURES)
 
 # ------------- MQTT: Home Assistant Discovery -------------
 mqtt_client = None
+mqtt_connected = False
+mqtt_last_error = ""
 def mqtt_connect_and_discover():
-    global mqtt_client
+    global mqtt_client, mqtt_connected, mqtt_last_error
     try:
         import paho.mqtt.client as mqtt
     except Exception as e:
@@ -52,7 +153,10 @@ def mqtt_connect_and_discover():
         return
 
     def on_connect(client, userdata, flags, rc):
+        global mqtt_connected, mqtt_last_error
         log.info(f"[MQTT] Connected (rc={rc})")
+        mqtt_connected = True
+        mqtt_last_error = ""
         client.publish(f"{MQTT_BASE}/availability", "online", retain=True)
         device = {
             "identifiers": [MQTT_BASE],
@@ -121,7 +225,10 @@ def mqtt_connect_and_discover():
             log.info(f"[MQTT] Discovery published: {disc_topic}")
 
     def on_disconnect(client, userdata, rc):
+        global mqtt_connected, mqtt_last_error
         log.warning(f"[MQTT] Disconnected (rc={rc})")
+        mqtt_connected = False
+        mqtt_last_error = f"disconnect_rc_{rc}"
 
     import paho.mqtt.client as mqtt
     mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
@@ -134,22 +241,32 @@ def mqtt_connect_and_discover():
         mqtt_client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
         threading.Thread(target=mqtt_client.loop_forever, daemon=True).start()
     except Exception as e:
+        mqtt_last_error = f"connect_failed: {e}"
         log.warning(f"[MQTT] Connect failed: {e}")
         mqtt_client = None
+        mqtt_connected = False
 
 def mqtt_publish_state():
     if mqtt_client is None:
         return
     try:
-        mqtt_client.publish(f"{MQTT_BASE}/state/gesture", last_gesture.get("label","unknown"), qos=0, retain=False)
-        mqtt_client.publish(f"{MQTT_BASE}/state/confidence", f"{last_gesture.get('confidence',0.0)*100:.2f}", qos=0, retain=False)
-        mqtt_client.publish(f"{MQTT_BASE}/state/hands", str(last_gesture.get('num_hands',0)), qos=0, retain=False)
+        current_label = last_gesture.get("label", "unknown")
+        publish_label = current_label
+        publish_conf = last_gesture.get('confidence', 0.0)
+        publish_hands = last_gesture.get('num_hands', 0)
+        if ACTIVE_GESTURES and current_label not in ACTIVE_GESTURES and current_label not in {"unknown", "none"}:
+            publish_label = "inactive"
+            publish_conf = 0.0
+            publish_hands = 0
+        mqtt_client.publish(f"{MQTT_BASE}/state/gesture", publish_label, qos=0, retain=False)
+        mqtt_client.publish(f"{MQTT_BASE}/state/confidence", f"{publish_conf*100:.2f}", qos=0, retain=False)
+        mqtt_client.publish(f"{MQTT_BASE}/state/hands", str(publish_hands), qos=0, retain=False)
         # Pinch
         mqtt_client.publish(f"{MQTT_BASE}/state/pinch_distance_px", f"{last_pinch.get('distance_px',0.0):.1f}", qos=0, retain=False)
         mqtt_client.publish(f"{MQTT_BASE}/state/pinch_distance_norm", f"{last_pinch.get('distance_norm',0.0):.4f}", qos=0, retain=False)
         mqtt_client.publish(f"{MQTT_BASE}/state/pinch_state", last_pinch.get("trend","steady"), qos=0, retain=False)
     except Exception as e:
-        log.debug(f"[MQTT] publish error: {e}")
+        log.error(f"[MQTT] publish error: {e}", exc_info=True)
 
 # ------------- Video readers -------------
 def _mjpeg_http_reader(url, timeout=8, chunk=4096):
@@ -201,6 +318,7 @@ def _frames():
         except Exception as e:
             global last_error
             last_error = f"HTTP reader: {type(e).__name__}: {e}"
+            log.error("Stream failure: %s", last_error, exc_info=True)
             time.sleep(0.6)
 
 # --- Gesture helpers ---
@@ -268,7 +386,7 @@ def _pinch_trend(new_px):
 
 # ------------- Stream / processing -------------
 def frame_generator():
-    global last_gesture, last_pinch, last_error
+    global last_gesture, last_pinch, last_error, last_frame_ts
     if not mp_ok:
         log.warning("MediaPipe not available, streaming raw frames.")
 
@@ -279,6 +397,8 @@ def frame_generator():
 
     for frame in _frames():
         label, conf, nh = "none", 0.0, 0
+        last_frame_ts = time.time()
+        last_error = ""
 
         if ctx:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -339,7 +459,52 @@ def index(): return render_template("index.html")
 def stream(): return Response(frame_generator(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route("/status")
-def status(): return jsonify({"gesture": last_gesture, "pinch": last_pinch})
+def status():
+    now = time.time()
+    video_ok = bool(last_frame_ts and (now - last_frame_ts) < max(2.0, FRAME_DELAY * 4))
+    payload = {
+        "gesture": last_gesture,
+        "pinch": last_pinch,
+        "video": {
+            "ok": video_ok,
+            "last_frame_ts": last_frame_ts,
+            "source": SOURCE_URL,
+        },
+        "mqtt": {
+            "connected": mqtt_connected,
+            "last_error": mqtt_last_error,
+            "host": MQTT_HOST,
+            "port": MQTT_PORT,
+        },
+        "debug": DEBUG_MODE or VERBOSE,
+        "last_error": last_error,
+        "active_gestures": sorted(ACTIVE_GESTURES),
+    }
+    if DEBUG_MODE or VERBOSE:
+        payload["logs"] = list(_LOG_HISTORY)
+    return jsonify(payload)
+
+
+@app.route("/gestures", methods=["GET", "POST"])
+def gestures_config():
+    global ACTIVE_GESTURES
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        active = data.get("active", [])
+        if not isinstance(active, list):
+            log.warning("Invalid gestures payload: %s", data)
+            return jsonify({"ok": False, "error": "Invalid payload"}), 400
+        filtered = [g for g in active if g in AVAILABLE_GESTURES]
+        if not filtered:
+            log.warning("Attempt to set empty or invalid gestures: %s", active)
+            return jsonify({"ok": False, "error": "No valid gestures"}), 400
+        ACTIVE_GESTURES = set(filtered)
+        log.info("Active gestures updated: %s", sorted(ACTIVE_GESTURES))
+        return jsonify({"ok": True, "active": sorted(ACTIVE_GESTURES)})
+    return jsonify({
+        "available": sorted(AVAILABLE_GESTURES),
+        "active": sorted(ACTIVE_GESTURES),
+    })
 
 @app.route("/health")
 def health():
