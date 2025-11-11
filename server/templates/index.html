@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ESP32 Cam + MediaPipe + MQTT</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <header>
+    <h1>ESP32 Cam + MediaPipe (800x600 @ 25fps)</h1>
+    <p>UI: <code>/</code> • Stream: <code>/stream</code> • Snapshot: <code>/snapshot.jpg</code> • Health: <code>/health</code></p>
+  </header>
+  <main>
+    <section class="video">
+      <img id="mjpeg" src="/stream" alt="stream"/>
+    </section>
+    <section class="panel">
+      <div class="card"><div class="k">Gesture</div><div class="v" id="gesture">-</div></div>
+      <div class="card"><div class="k">Confidence</div><div class="v" id="confidence">-</div></div>
+      <div class="card"><div class="k">Hands</div><div class="v" id="hands">0</div></div>
+      <div class="card"><div class="k">Pinch</div><div class="v" id="pinch">-</div></div>
+    </section>
+  </main>
+  <script>
+    async function refresh(){
+      try{
+        const r = await fetch('/status'); const j = await r.json();
+        document.getElementById('gesture').textContent = j.gesture.label;
+        document.getElementById('confidence').textContent = (j.gesture.confidence||0).toFixed(2);
+        document.getElementById('hands').textContent = j.gesture.num_hands||0;
+        document.getElementById('pinch').textContent = j.pinch.distance_px.toFixed(1) + 'px ' + j.pinch.trend;
+      }catch(e){}
+    }
+    setInterval(refresh, 800); refresh();
+  </script>
+</body>
+</html>

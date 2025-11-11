@@ -1,0 +1,28 @@
+version: "3.8"
+services:
+  esp32-gesture-mqtt:
+    build: .
+    container_name: esp32-gesture-mqtt
+    environment:
+      SOURCE_URL: "http://192.168.1.24/stream"
+      VERBOSE: "1"
+      TARGET_FPS: "25"
+      MQTT_HOST: "192.168.1.100"
+      MQTT_PORT: "1883"
+      MQTT_USER: "mqtt_user"
+      MQTT_PASSWORD: "Casafiga94?"
+      MQTT_BASE_TOPIC: "gesture32"
+      MQTT_DISCOVERY_PREFIX: "homeassistant"
+      PINCH_DEADZONE_PX: "8"
+      PINCH_HISTORY: "8"
+      CUSTOM_GESTURE_MAP: "{}"
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "12345:12345"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:12345/health"]
+      interval: 20s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
