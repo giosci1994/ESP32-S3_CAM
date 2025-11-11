@@ -15,7 +15,7 @@
 ## 🔥 Caratteristiche principali
 
 - ✅ **Stream MJPEG** da ESP32-S3/OV2640 → server Docker
-- ✋ **Gesture hands** + overlay (peace, ok, rock, point, swipe, …)
+- ✋ **Gesture hands** ottimizzate (V di vittoria, OK, mano aperta, quattro angoli)
 - 🤏 **Pinch** (pollice–indice): distanza **px** / **normalizzata** + **trend** (_opening / closing / steady_)
 - 📡 **MQTT** con **Home Assistant Discovery** (sensori auto-creati)
 - ⚙️ **UI Web** pronta: `/`, `/stream`, `/status`, `/snapshot.jpg`, `/health`
