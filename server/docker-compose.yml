@@ -11,7 +11,7 @@ services:
       TARGET_FPS: ${TARGET_FPS}
       MQTT_HOST: ${MQTT_HOST}
       MQTT_PORT: ${MQTT_PORT}
-      ## mqtt user ##: ${## mqtt user ##}
+      MQTT_USER: ${MQTT_USER}
       MQTT_PASSWORD: ${MQTT_PASSWORD}
       MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC}
       MQTT_DISCOVERY_PREFIX: ${MQTT_DISCOVERY_PREFIX}
