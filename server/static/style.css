@@ -68,4 +68,46 @@ body.drawer-open #settings-drawer{ transform:translateX(0); }
 #gesture-save:hover{ background:#3a4e85; }
 #gesture-save:disabled{ opacity:0.5; cursor:not-allowed; box-shadow:none; }
 .gesture-status{ font-size:12px; color:#a4b2d6; }
+.advanced-groups{ display:flex; flex-direction:column; gap:20px; }
+.advanced-card{ background:rgba(16,18,28,0.95); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:16px;
+    display:flex; flex-direction:column; gap:16px; box-shadow:0 6px 18px rgba(0,0,0,0.3); }
+.advanced-card h3{ margin:0; font-size:14px; letter-spacing:0.6px; text-transform:uppercase; color:#96a9df; }
+.advanced-grid{ display:grid; gap:14px; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); }
+.advanced-control{ display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:10px;
+    background:rgba(12,14,22,0.88); border:1px solid rgba(255,255,255,0.06); }
+.advanced-control.toggle{ gap:6px; }
+.advanced-control label{ font-size:13px; font-weight:600; color:#d5e1ff; }
+.control-hint{ margin:0; font-size:12px; color:#8fa3d9; line-height:1.4; }
+#advanced-section select, #advanced-section input[type="text"]{ width:100%; padding:8px 10px; border-radius:8px;
+    border:1px solid rgba(255,255,255,0.14); background:rgba(14,16,24,0.95); color:#e9eeff; font-size:13px; }
+#advanced-section select:focus, #advanced-section input[type="text"]:focus{ outline:none; border-color:#4f7bff;
+    box-shadow:0 0 0 2px rgba(79,123,255,0.25); }
+.checkbox-label{ display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; color:#d5e1ff; }
+.checkbox-label input{ width:18px; height:18px; accent-color:#4f7bff; }
+.switch{ display:flex; align-items:center; justify-content:space-between; gap:16px; font-size:13px; font-weight:600;
+    color:#d5e1ff; }
+.switch input{ appearance:none; width:0; height:0; opacity:0; position:absolute; }
+.switch-slider{ position:relative; width:46px; height:24px; border-radius:999px; background:rgba(255,255,255,0.15);
+    transition:background 0.2s ease; display:inline-block; }
+.switch-slider::after{ content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%;
+    background:#0f131f; transition: transform 0.2s ease, background 0.2s ease; box-shadow:0 2px 6px rgba(0,0,0,0.4); }
+.switch input:checked + .switch-slider{ background:#4f7bff; }
+.switch input:checked + .switch-slider::after{ transform:translateX(22px); background:#dce6ff; }
+.advanced-actions{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.advanced-actions .primary{ padding:8px 18px; border:none; border-radius:999px; background:#3860d8; color:#f4f7ff;
+    font-weight:600; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.35); }
+.advanced-actions .primary:disabled{ opacity:0.5; cursor:not-allowed; box-shadow:none; }
+.advanced-actions .primary:not(:disabled):hover{ background:#4f7bff; }
+.advanced-actions .secondary{ padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,0.18);
+    background:transparent; color:#d3dcff; font-weight:600; cursor:pointer; transition:background 0.2s ease, color 0.2s ease; }
+.advanced-actions .secondary:hover{ background:rgba(255,255,255,0.12); color:#ffffff; }
+.advanced-status{ font-size:12px; color:#a4b2d6; min-height:16px; display:inline-flex; align-items:center; }
+.preview-grid{ display:grid; gap:14px; }
+.preview-card{ background:rgba(13,15,22,0.92); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:14px;
+    display:flex; flex-direction:column; gap:10px; box-shadow:0 5px 16px rgba(0,0,0,0.3); }
+.preview-header{ display:flex; justify-content:space-between; font-size:13px; font-weight:600; color:#d5e1ff; }
+.preview-header span:last-child{ font-variant-numeric:tabular-nums; color:#9cc4ff; }
+.preview-bar{ height:8px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden; }
+.preview-fill{ height:100%; border-radius:999px; background:linear-gradient(90deg, #4f7bff, #7fd7ff); width:0%;
+    transition:width 0.25s ease; }
 @media (max-width:980px){ main{ grid-template-columns:1fr; } }

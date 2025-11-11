@@ -58,7 +58,7 @@ _load_env_from_file()
 
 SOURCE_URL = os.getenv("SOURCE_URL", "http://esp32-s3.local/stream")
 TARGET_FPS = float(os.getenv("TARGET_FPS", "25"))
-FRAME_DELAY = 1.0 / TARGET_FPS
+FRAME_DELAY = 1.0 / max(TARGET_FPS, 1.0)
 TARGET_SIZE = (800, 600)
 VERBOSE = os.getenv("VERBOSE", "0").lower() in {"1", "true", "yes", "on"}
 DEBUG_MODE = os.getenv("DEBUG_MODE", "0").lower() in {"1", "true", "yes", "on"}
@@ -116,6 +116,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "gesture32")
+_MQTT_BASE_INITIAL = MQTT_BASE
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gesture32-server")
 
@@ -126,6 +127,37 @@ logging.basicConfig(
 log = logging.getLogger("gesture-server")
 
 _LOG_HISTORY = deque(maxlen=int(os.getenv("LOG_HISTORY_SIZE", "200")))
+
+_FRAME_SIZE_CHOICES = {
+    "320x240": (320, 240),
+    "640x480": (640, 480),
+    "800x600": (800, 600),
+}
+
+
+def _advanced_defaults():
+    return {
+        "confidence_min": CONFIDENCE_THRESHOLD,
+        "movement_sensitivity_px": 8,
+        "temporal_smoothing": 5,
+        "hold_delay_ms": 700,
+        "pinch_threshold_norm": 0.05,
+        "pinch_stability_px": 12,
+        "pinch_confirm_ms": 1000,
+        "corner_area_pct": 25,
+        "processing_fps": int(round(TARGET_FPS)),
+        "frame_size": "{}x{}".format(*TARGET_SIZE),
+        "brightness_contrast": 0,
+        "auto_exposure": True,
+        "mqtt_publish_interval": 400,
+        "float_precision": 2,
+        "mqtt_base_topic": _MQTT_BASE_INITIAL,
+        "show_landmarks": True,
+        "visual_feedback": True,
+    }
+
+
+ADVANCED_SETTINGS = _advanced_defaults()
 
 
 class _MemoryLogHandler(logging.Handler):
@@ -311,12 +343,26 @@ def mqtt_publish_state():
             publish_label = "inactive"
             publish_conf = 0.0
             publish_hands = 0
+        prec = int(ADVANCED_SETTINGS.get("float_precision", 2))
+        prec = min(4, max(1, prec))
+        fmt = "{:." + str(prec) + "f}"
+        fmt_norm = "{:." + str(max(prec, 3)) + "f}"
         mqtt_client.publish(f"{MQTT_BASE}/state/gesture", publish_label, qos=0, retain=False)
-        mqtt_client.publish(f"{MQTT_BASE}/state/confidence", f"{publish_conf*100:.2f}", qos=0, retain=False)
+        mqtt_client.publish(f"{MQTT_BASE}/state/confidence", fmt.format(publish_conf * 100.0), qos=0, retain=False)
         mqtt_client.publish(f"{MQTT_BASE}/state/hands", str(publish_hands), qos=0, retain=False)
         # Pinch
-        mqtt_client.publish(f"{MQTT_BASE}/state/pinch_distance_px", f"{last_pinch.get('distance_px',0.0):.1f}", qos=0, retain=False)
-        mqtt_client.publish(f"{MQTT_BASE}/state/pinch_distance_norm", f"{last_pinch.get('distance_norm',0.0):.4f}", qos=0, retain=False)
+        mqtt_client.publish(
+            f"{MQTT_BASE}/state/pinch_distance_px",
+            fmt.format(last_pinch.get('distance_px', 0.0)),
+            qos=0,
+            retain=False,
+        )
+        mqtt_client.publish(
+            f"{MQTT_BASE}/state/pinch_distance_norm",
+            fmt_norm.format(last_pinch.get('distance_norm', 0.0)),
+            qos=0,
+            retain=False,
+        )
         mqtt_client.publish(f"{MQTT_BASE}/state/pinch_state", last_pinch.get("trend","steady"), qos=0, retain=False)
     except Exception as e:
         log.error(f"[MQTT] publish error: {e}", exc_info=True)
@@ -472,9 +518,20 @@ def frame_generator():
     last_pub = 0.0
 
     for frame in _frames():
+        settings_snapshot = dict(ADVANCED_SETTINGS)
         label, conf, nh = "none", 0.0, 0
         last_frame_ts = time.time()
         last_error = ""
+
+        target_size = _FRAME_SIZE_CHOICES.get(settings_snapshot.get("frame_size"), TARGET_SIZE)
+        if target_size != frame.shape[1::-1]:
+            frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
+
+        bc_val = float(settings_snapshot.get("brightness_contrast", 0) or 0)
+        if abs(bc_val) > 0.01:
+            alpha = 1.0 + (bc_val / 100.0)
+            beta = bc_val
+            frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
         if ctx:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -485,9 +542,14 @@ def frame_generator():
                     g, c = _classify_gesture(lm, hd.classification[0].label)
                     if c > conf: label, conf = g, c
                     nh += 1
-                    mp_drawing.draw_landmarks(frame, lm, mp_hands.HAND_CONNECTIONS,
-                                              mp_styles.get_default_hand_landmarks_style(),
-                                              mp_styles.get_default_hand_connections_style())
+                    if settings_snapshot.get("show_landmarks", True):
+                        mp_drawing.draw_landmarks(
+                            frame,
+                            lm,
+                            mp_hands.HAND_CONNECTIONS,
+                            mp_styles.get_default_hand_landmarks_style(),
+                            mp_styles.get_default_hand_connections_style(),
+                        )
 
                 # Pinch: usa la prima mano
                 h, w = frame.shape[:2]
@@ -506,17 +568,31 @@ def frame_generator():
 
         # MQTT publish (throttled)
         nowt = time.time()
-        if nowt - last_pub > 0.4:
+        interval = max(0.05, float(settings_snapshot.get("mqtt_publish_interval", 400)) / 1000.0)
+        if nowt - last_pub > interval:
             mqtt_publish_state()
             last_pub = nowt
 
-        frame = cv2.resize(frame, (800, 600), interpolation=cv2.INTER_AREA)
+        if frame.shape[1::-1] != target_size:
+            frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_AREA)
         # Overlay info
-        cv2.rectangle(frame, (10,10), (560,72), (0,0,0), -1)
-        txt1 = f"Gesture: {last_gesture['label']}  Conf: {last_gesture['confidence']:.2f}  Hands: {last_gesture['num_hands']}"
+        info_box_w = max(220, target_size[0] - 40)
+        cv2.rectangle(frame, (10,10), (10 + info_box_w, 72), (0,0,0), -1)
+        display_prec = int(settings_snapshot.get("float_precision", 2))
+        display_prec = min(4, max(1, display_prec))
+        conf_txt = f"{last_gesture['confidence']:.{display_prec}f}"
+        txt1 = f"Gesture: {last_gesture['label']}  Conf: {conf_txt}  Hands: {last_gesture['num_hands']}"
         cv2.putText(frame, txt1, (16,36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
-        txt2 = f"Pinch: {last_pinch['distance_px']:.1f}px  {last_pinch['trend']} ({last_pinch['delta_px']:+.0f}px)"
+        pinch_px = last_pinch.get('distance_px', 0.0)
+        pinch_delta = last_pinch.get('delta_px', 0.0)
+        pinch_txt = f"{pinch_px:.{display_prec}f}"
+        txt2 = f"Pinch: {pinch_txt}px  {last_pinch['trend']} ({pinch_delta:+.0f}px)"
         cv2.putText(frame, txt2, (16,64), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (120,220,255), 2, cv2.LINE_AA)
+
+        if settings_snapshot.get("visual_feedback", True):
+            color = (60, 220, 120) if last_gesture['confidence'] >= CONFIDENCE_THRESHOLD else (70, 70, 220)
+            center = (target_size[0] - 60, target_size[1] - 60)
+            cv2.circle(frame, center, 32, color, 4)
 
         ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
         if not ok:
@@ -557,6 +633,7 @@ def status():
         "last_error": last_error,
         "active_gestures": sorted(ACTIVE_GESTURES),
         "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "advanced": dict(ADVANCED_SETTINGS),
     }
     if DEBUG_MODE or VERBOSE:
         payload["logs"] = list(_LOG_HISTORY)
@@ -584,6 +661,7 @@ def gestures_config():
         threshold = _clamp(threshold, 0.0, 1.0)
         ACTIVE_GESTURES = set(filtered)
         CONFIDENCE_THRESHOLD = threshold
+        ADVANCED_SETTINGS["confidence_min"] = CONFIDENCE_THRESHOLD
         log.info("Active gestures updated: %s", sorted(ACTIVE_GESTURES))
         log.info("Confidence threshold set to %.2f", CONFIDENCE_THRESHOLD)
         return jsonify({
@@ -632,7 +710,8 @@ def snapshot():
     frame = _one_frame()
     if frame is None:
         return ("", 503)
-    ok, buf = cv2.imencode(".jpg", cv2.resize(frame, (800,600)), [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    size = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS.get("frame_size"), TARGET_SIZE)
+    ok, buf = cv2.imencode(".jpg", cv2.resize(frame, size), [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     if not ok: return ("", 503)
     return Response(buf.tobytes(), mimetype="image/jpeg")
 
@@ -642,3 +721,92 @@ def _boot():
     mqtt_connect_and_discover()
 
 _boot()
+@app.route("/advanced-settings", methods=["GET", "POST"])
+def advanced_settings():
+    global ADVANCED_SETTINGS, CONFIDENCE_THRESHOLD, TARGET_FPS, FRAME_DELAY, TARGET_SIZE, MQTT_BASE
+    if request.method == "GET":
+        return jsonify({"settings": ADVANCED_SETTINGS})
+
+    data = request.get_json(silent=True) or {}
+    if data.get("action") == "reset":
+        ADVANCED_SETTINGS = _advanced_defaults()
+        CONFIDENCE_THRESHOLD = ADVANCED_SETTINGS["confidence_min"]
+        TARGET_FPS = float(ADVANCED_SETTINGS["processing_fps"])
+        FRAME_DELAY = 1.0 / max(TARGET_FPS, 1.0)
+        TARGET_SIZE = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS["frame_size"], TARGET_SIZE)
+        MQTT_BASE = ADVANCED_SETTINGS["mqtt_base_topic"] or MQTT_BASE
+        log.info("Advanced settings reset to defaults")
+        return jsonify({"ok": True, "settings": ADVANCED_SETTINGS})
+
+    errors = {}
+    updated = {}
+
+    def _parse_float(name, low, high, default):
+        raw = data.get(name, default)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            errors[name] = "Valore non valido"
+            return
+        updated[name] = _clamp(value, low, high)
+
+    def _parse_int(name, low, high, default):
+        raw = data.get(name, default)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            errors[name] = "Valore non valido"
+            return
+        updated[name] = max(low, min(high, value))
+
+    _parse_float("confidence_min", 0.5, 0.95, ADVANCED_SETTINGS["confidence_min"])
+    _parse_int("movement_sensitivity_px", 4, 30, ADVANCED_SETTINGS["movement_sensitivity_px"])
+    _parse_int("temporal_smoothing", 1, 10, ADVANCED_SETTINGS["temporal_smoothing"])
+    _parse_int("hold_delay_ms", 200, 1500, ADVANCED_SETTINGS["hold_delay_ms"])
+    _parse_float("pinch_threshold_norm", 0.03, 0.08, ADVANCED_SETTINGS["pinch_threshold_norm"])
+    _parse_int("pinch_stability_px", 4, 20, ADVANCED_SETTINGS["pinch_stability_px"])
+    _parse_int("pinch_confirm_ms", 300, 2000, ADVANCED_SETTINGS["pinch_confirm_ms"])
+    _parse_int("corner_area_pct", 10, 50, ADVANCED_SETTINGS["corner_area_pct"])
+    _parse_int("processing_fps", 10, 30, ADVANCED_SETTINGS["processing_fps"])
+    _parse_int("mqtt_publish_interval", 200, 1000, ADVANCED_SETTINGS["mqtt_publish_interval"])
+    _parse_int("float_precision", 1, 4, ADVANCED_SETTINGS["float_precision"])
+
+    frame_size = data.get("frame_size", ADVANCED_SETTINGS["frame_size"])
+    if frame_size not in _FRAME_SIZE_CHOICES:
+        errors["frame_size"] = "Valore non supportato"
+    else:
+        updated["frame_size"] = frame_size
+
+    bc_raw = data.get("brightness_contrast", ADVANCED_SETTINGS["brightness_contrast"])
+    try:
+        bc_value = float(bc_raw)
+    except (TypeError, ValueError):
+        errors["brightness_contrast"] = "Valore non valido"
+    else:
+        updated["brightness_contrast"] = max(-50.0, min(50.0, bc_value))
+
+    for name in ("auto_exposure", "show_landmarks", "visual_feedback"):
+        updated[name] = bool(data.get(name, ADVANCED_SETTINGS[name]))
+
+    mqtt_base_topic = data.get("mqtt_base_topic", ADVANCED_SETTINGS["mqtt_base_topic"]) or ADVANCED_SETTINGS["mqtt_base_topic"]
+    if isinstance(mqtt_base_topic, str):
+        mqtt_base_topic = mqtt_base_topic.strip()
+    else:
+        errors["mqtt_base_topic"] = "Valore non valido"
+    if not errors.get("mqtt_base_topic"):
+        if mqtt_base_topic:
+            updated["mqtt_base_topic"] = mqtt_base_topic
+        else:
+            errors["mqtt_base_topic"] = "Valore obbligatorio"
+
+    if errors:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    ADVANCED_SETTINGS.update(updated)
+    CONFIDENCE_THRESHOLD = ADVANCED_SETTINGS["confidence_min"]
+    TARGET_FPS = float(ADVANCED_SETTINGS["processing_fps"])
+    FRAME_DELAY = 1.0 / max(TARGET_FPS, 1.0)
+    TARGET_SIZE = _FRAME_SIZE_CHOICES.get(ADVANCED_SETTINGS["frame_size"], TARGET_SIZE)
+    MQTT_BASE = ADVANCED_SETTINGS["mqtt_base_topic"]
+    log.info("Advanced settings updated: %s", json.dumps(ADVANCED_SETTINGS))
+    return jsonify({"ok": True, "settings": ADVANCED_SETTINGS})
