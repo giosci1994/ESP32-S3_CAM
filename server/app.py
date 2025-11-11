@@ -61,7 +61,10 @@ TARGET_FPS = float(os.getenv("TARGET_FPS", "25"))
 FRAME_DELAY = 1.0 / TARGET_FPS
 TARGET_SIZE = (800, 600)
 VERBOSE = os.getenv("VERBOSE", "0").lower() in {"1", "true", "yes", "on"}
-DEBUG_MODE = os.getenv("DEBUG_MODE", "0").lower() in {"1", "true", "yes", "on"} or VERBOSE
+DEBUG_MODE = os.getenv("DEBUG_MODE", "0").lower() in {"1", "true", "yes", "on"}
+if VERBOSE:
+    DEBUG_MODE = True
+DEBUG_LOCKED = VERBOSE
 CUSTOM_GESTURE_MAP = json.loads(os.getenv("CUSTOM_GESTURE_MAP", "{}"))
 
 # Pinch tuning
@@ -100,6 +103,13 @@ class _MemoryLogHandler(logging.Handler):
 
 
 logging.getLogger().addHandler(_MemoryLogHandler())
+
+
+def _apply_logging_level():
+    logging.getLogger().setLevel(logging.DEBUG if (VERBOSE or DEBUG_MODE) else logging.INFO)
+
+
+_apply_logging_level()
 
 app = Flask(__name__)
 last_gesture = {"label":"unknown","confidence":0.0,"num_hands":0}
@@ -477,6 +487,7 @@ def status():
             "port": MQTT_PORT,
         },
         "debug": DEBUG_MODE or VERBOSE,
+        "debug_locked": DEBUG_LOCKED,
         "last_error": last_error,
         "active_gestures": sorted(ACTIVE_GESTURES),
     }
@@ -504,6 +515,27 @@ def gestures_config():
     return jsonify({
         "available": sorted(AVAILABLE_GESTURES),
         "active": sorted(ACTIVE_GESTURES),
+    })
+
+
+@app.route("/debug", methods=["POST"])
+def debug_config():
+    global DEBUG_MODE
+    data = request.get_json(silent=True) or {}
+    if DEBUG_LOCKED:
+        return jsonify({
+            "ok": False,
+            "error": "Debug bloccato dalla configurazione",  # UI handles message
+            "debug": True,
+            "locked": True,
+        }), 400
+    enabled = bool(data.get("enabled"))
+    DEBUG_MODE = enabled
+    _apply_logging_level()
+    return jsonify({
+        "ok": True,
+        "debug": DEBUG_MODE or VERBOSE,
+        "locked": DEBUG_LOCKED,
     })
 
 @app.route("/health")

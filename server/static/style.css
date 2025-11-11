@@ -34,9 +34,16 @@ body.drawer-open #settings-drawer{ transform:translateX(0); }
 .log-block{ border:1px solid rgba(255,255,255,0.08); border-radius:12px; overflow:hidden; background:rgba(10,10,14,0.85);
     display:flex; flex-direction:column; max-height:260px; }
 .log-block[data-active="off"]{ opacity:0.6; }
-.log-header{ padding:10px 12px; font-weight:600; font-size:14px; background:rgba(255,255,255,0.04); }
+.log-header{ padding:10px 12px; font-weight:600; font-size:14px; background:rgba(255,255,255,0.04);
+    display:flex; align-items:center; justify-content:space-between; gap:12px; }
 #log-output{ margin:0; padding:12px; font-size:12px; line-height:1.4; font-family: "JetBrains Mono", "Fira Code", monospace;
     white-space:pre-wrap; color:#e1e4f7; flex:1; overflow:auto; }
+.pill-btn{ padding:6px 14px; border:none; border-radius:999px; background:#2a3b62; color:#eef3ff; font-weight:600;
+    cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,0.35); transition: background 0.2s ease, opacity 0.2s ease; font-size:12px; }
+.pill-btn[data-state="on"]{ background:#43673f; }
+.pill-btn:disabled{ opacity:0.6; cursor:not-allowed; box-shadow:none; }
+.pill-btn:not(:disabled):hover{ background:#3a4e85; }
+.pill-btn[data-state="on"]:not(:disabled):hover{ background:#54874f; }
 .gesture-list{ display:grid; gap:8px; }
 .gesture-item{ display:flex; gap:10px; align-items:center; padding:10px 12px; background:rgba(23,25,33,0.9);
     border-radius:10px; border:1px solid rgba(255,255,255,0.08); font-size:14px; cursor:pointer; }
