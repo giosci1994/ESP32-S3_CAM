@@ -4,21 +4,6 @@ services:
     build: .
     container_name: esp32-gesture-mqtt
     environment:
-<<<<<<< HEAD
-      SOURCE_URL: ${SOURCE_URL}
-      VERBOSE: ${VERBOSE}
-      TARGET_FPS: ${TARGET_FPS}
-      MQTT_HOST: ${MQTT_HOST}
-      MQTT_PORT: ${MQTT_PORT}
-      MQTT_USER: ${MQTT_USER}
-      MQTT_PASSWORD: ${MQTT_PASSWORD}
-      MQTT_BASE_TOPIC: ${MQTT_BASE_TOPIC}
-      MQTT_DISCOVERY_PREFIX: ${MQTT_DISCOVERY_PREFIX}
-      PINCH_DEADZONE_PX: ${PINCH_DEADZONE_PX}
-      PINCH_HISTORY: ${PINCH_HISTORY}
-      CUSTOM_GESTURE_MAP: ${CUSTOM_GESTURE_MAP}
-      PYTHONUNBUFFERED: ${PYTHONUNBUFFERED}
-=======
       SOURCE_URL: "http://192.168.1.24/stream"
       VERBOSE: "1"
       TARGET_FPS: "25"
@@ -32,7 +17,6 @@ services:
       PINCH_HISTORY: "8"
       CUSTOM_GESTURE_MAP: "{}"
       PYTHONUNBUFFERED: "1"
->>>>>>> ef27f72 (ritorno alle origini)
     ports:
       - "12345:12345"
     restart: unless-stopped

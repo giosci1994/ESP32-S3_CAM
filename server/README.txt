@@ -30,11 +30,6 @@ Avvio rapido:
   # oppure:
   docker compose up -d
 
-Configurazione (.env):
-  cp .env.example .env
-  # modifica i valori con le impostazioni locali
-  # il server Flask, docker compose e RUN.sh caricano automaticamente questo file
-
 Tuning pinch via ENV:
 - PINCH_DEADZONE_PX (default 8)
 - PINCH_HISTORY (default 8)

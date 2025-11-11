@@ -17,15 +17,9 @@ ENV VERBOSE="1"
 ENV TARGET_FPS="25"
 ENV MQTT_HOST="192.168.1.100"
 ENV MQTT_PORT="1883"
-<<<<<<< HEAD
-ENV MQTT_USER="## mqtt user ##"
-ENV MQTT_PASSWORD=""
-ENV MQTT_BASE_TOPIC="## base topic mqtt ##"
-=======
 ENV MQTT_USER="mqtt_user"
 ENV MQTT_PASSWORD="Casafiga94?"
 ENV MQTT_BASE_TOPIC="gesture32"
->>>>>>> ef27f72 (ritorno alle origini)
 ENV MQTT_DISCOVERY_PREFIX="homeassistant"
 ENV PINCH_DEADZONE_PX="8"
 ENV PINCH_HISTORY="8"

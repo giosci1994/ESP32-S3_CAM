@@ -1,22 +1,6 @@
 import os, time, re, cv2, numpy as np, requests, logging, json, threading
 from flask import Flask, Response, render_template, jsonify
 from collections import deque
-from pathlib import Path
-
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - fallback when dependency missing
-    def load_dotenv(*_args, **_kwargs):
-        return False
-
-# --- Load environment -------------------------------------------------------
-# Load a global .env (e.g. for docker-compose) and then a local one located in
-# the same folder as this script. The latter has priority so developers can
-# override values while keeping the global file untouched.
-load_dotenv()
-env_path = Path(__file__).resolve().parent / ".env"
-if env_path.exists():
-    load_dotenv(env_path, override=True)
 
 # --- MediaPipe (hands only) ---
 mp_ok = True
@@ -43,15 +27,9 @@ PINCH_HISTORY = int(os.getenv("PINCH_HISTORY", "8"))
 # MQTT
 MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.100")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-<<<<<<< HEAD
-MQTT_USER = os.getenv("MQTT_USER", "")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
-MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "## base topic mqtt ##")
-=======
 MQTT_USER = os.getenv("MQTT_USER", "mqtt_user")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "password")
 MQTT_BASE = os.getenv("MQTT_BASE_TOPIC", "gesture32")
->>>>>>> ef27f72 (ritorno alle origini)
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant")
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "gesture32-server")
 
@@ -147,12 +125,7 @@ def mqtt_connect_and_discover():
 
     import paho.mqtt.client as mqtt
     mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
-<<<<<<< HEAD
-    if MQTT_USER or MQTT_PASSWORD:
-        mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
-=======
     mqtt_client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
->>>>>>> ef27f72 (ritorno alle origini)
     mqtt_client.will_set(f"{MQTT_BASE}/availability", "offline", retain=True)
     mqtt_client.on_connect = on_connect
     mqtt_client.on_disconnect = on_disconnect
